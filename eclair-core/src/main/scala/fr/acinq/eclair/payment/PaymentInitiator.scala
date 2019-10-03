@@ -22,12 +22,14 @@ import akka.actor.{Actor, ActorLogging, ActorRef, Props}
 import fr.acinq.bitcoin.ByteVector32
 import fr.acinq.bitcoin.Crypto.PublicKey
 import fr.acinq.eclair.channel.Channel
+import fr.acinq.eclair.crypto.Sphinx
 import fr.acinq.eclair.payment.PaymentLifecycle.{SendPayment, SendPaymentToRoute}
 import fr.acinq.eclair.payment.PaymentRequest.ExtraHop
-import fr.acinq.eclair.router.RouteParams
-import fr.acinq.eclair.wire.Onion
-import fr.acinq.eclair.wire.Onion.FinalLegacyPayload
-import fr.acinq.eclair.{CltvExpiryDelta, MilliSatoshi, NodeParams}
+import fr.acinq.eclair.router.{RouteParams, TrampolineHop}
+import fr.acinq.eclair.wire.Onion.{FinalLegacyPayload, FinalTlvPayload}
+import fr.acinq.eclair.wire.OnionTlv._
+import fr.acinq.eclair.wire.{Onion, OnionTlv, TlvStream}
+import fr.acinq.eclair.{CltvExpiryDelta, LongToBtcAmount, MilliSatoshi, NodeParams}
 
 /**
  * Created by PM on 29/08/2016.
@@ -51,6 +53,18 @@ class PaymentInitiator(nodeParams: NodeParams, router: ActorRef, relayer: ActorR
           // NB: we only generate legacy payment onions for now for maximum compatibility.
           r.predefinedRoute match {
             case Nil => payFsm forward SendPayment(r.paymentHash, r.targetNodeId, FinalLegacyPayload(r.amount, finalExpiry), r.maxAttempts, r.assistedRoutes, r.routeParams)
+            // TODO: @t-bast: remove this test hook once done
+            case b :: d :: Nil =>
+              // We use b as trampoline hop to reach d:
+              //       .------.
+              //      /        \
+              // a -> b -> c -> d
+              val (amount_b, expiry_b, trampolinePayloads) = PaymentLifecycle.buildPayloads(
+                TrampolineHop(b, d, nodeParams.expiryDeltaBlocks + nodeParams.expiryDeltaBlocks, 3000 msat) :: Nil,
+                FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(r.amount), OutgoingCltv(finalExpiry))))
+              val Sphinx.PacketAndSecrets(trampolineOnion, _) = PaymentLifecycle.buildOnion(Sphinx.TrampolinePacket)(Seq(b, d), trampolinePayloads, r.paymentHash)
+              val payload_b = FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(amount_b), OutgoingCltv(expiry_b), TrampolineOnion(trampolineOnion)))
+              payFsm forward SendPaymentToRoute(r.paymentHash, nodeParams.nodeId :: b :: Nil, payload_b)
             case hops => payFsm forward SendPaymentToRoute(r.paymentHash, hops, FinalLegacyPayload(r.amount, finalExpiry))
           }
       }

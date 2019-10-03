@@ -94,7 +94,51 @@ case class PrivateChannel(localNodeId: PublicKey, remoteNodeId: PublicKey, updat
 
 case class AssistedChannel(extraHop: ExtraHop, nextNodeId: PublicKey, htlcMaximum: MilliSatoshi)
 
-case class Hop(nodeId: PublicKey, nextNodeId: PublicKey, lastUpdate: ChannelUpdate)
+trait GenericHop {
+  /** @return the id of the start node. */
+  def nodeId: PublicKey
+
+  /** @return the id of the end node. */
+  def nextNodeId: PublicKey
+
+  /**
+   * @param amount amount to be forwarded.
+   * @return total fee required by the current hop.
+   */
+  def fee(amount: MilliSatoshi): MilliSatoshi
+
+  /** @return cltv delta required by the current hop. */
+  def cltvExpiryDelta: CltvExpiryDelta
+}
+
+/**
+ * A directed hop between two nodes using a specific channel.
+ * TODO: @t-bast: maybe rename that to ChannelHop and GenericHop to Hop?
+ *
+ * @param nodeId     id of the start node.
+ * @param nextNodeId id of the end node.
+ * @param lastUpdate last update of the channel used for the hop.
+ */
+case class Hop(nodeId: PublicKey, nextNodeId: PublicKey, lastUpdate: ChannelUpdate) extends GenericHop {
+  override lazy val cltvExpiryDelta = lastUpdate.cltvExpiryDelta
+
+  override def fee(amount: MilliSatoshi): MilliSatoshi = nodeFee(lastUpdate.feeBaseMsat, lastUpdate.feeProportionalMillionths, amount)
+}
+
+/**
+ * A directed hop between two trampoline nodes.
+ * These nodes need not be connected and we don't need to know a route between them.
+ * The start node will compute the route to the end node itself when it receives our payment.
+ * TODO: @t-bast: once the NodeUpdate message is implemented, we should use that instead of inline cltv and fee.
+ *
+ * @param nodeId          id of the start node.
+ * @param nextNodeId      id of the end node.
+ * @param cltvExpiryDelta cltv expiry delta.
+ * @param fee             total fee for that hop.
+ */
+case class TrampolineHop(nodeId: PublicKey, nextNodeId: PublicKey, cltvExpiryDelta: CltvExpiryDelta, fee: MilliSatoshi) extends GenericHop {
+  override def fee(amount: MilliSatoshi): MilliSatoshi = fee
+}
 
 case class RouteParams(randomize: Boolean, maxFeeBase: MilliSatoshi, maxFeePct: Double, routeMaxLength: Int, routeMaxCltv: CltvExpiryDelta, ratios: Option[WeightRatios])
 

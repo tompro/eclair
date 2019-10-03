@@ -26,7 +26,7 @@ import fr.acinq.eclair.blockchain.EclairWallet
 import fr.acinq.eclair.channel.Helpers.Closing
 import fr.acinq.eclair.channel.{HasCommitments, _}
 import fr.acinq.eclair.db.PendingRelayDb
-import fr.acinq.eclair.payment.Relayer.RelayPayload
+import fr.acinq.eclair.payment.Relayer.{RelayPayload, TrampolinePayload}
 import fr.acinq.eclair.payment.{Relayed, Relayer}
 import fr.acinq.eclair.router.Rebroadcast
 import fr.acinq.eclair.transactions.{IN, OUT}
@@ -176,7 +176,11 @@ object Switchboard extends Logging {
       .filter(_.direction == OUT)
       .map(_.add)
       .map(Relayer.decryptPacket(_, privateKey, features))
-      .collect { case Right(RelayPayload(add, _, _)) => add } // we only consider htlcs that are relayed, not the ones for which we are the final node
+      .collect {
+        case Right(RelayPayload(add, _, _)) => add
+        // TODO: @t-bast: not true when we're the final trampoline node
+        case Right(TrampolinePayload(add, _, _, _)) => add
+      } // we only consider htlcs that are relayed, not the ones for which we are the final node
 
     // Here we do it differently because we need the origin information.
     val relayed_out = channels

@@ -24,11 +24,11 @@ import fr.acinq.eclair.channel.{Channel, ChannelVersion, Commitments}
 import fr.acinq.eclair.crypto.Sphinx
 import fr.acinq.eclair.crypto.Sphinx.{DecryptedPacket, PacketAndSecrets}
 import fr.acinq.eclair.payment.PaymentLifecycle._
-import fr.acinq.eclair.router.Hop
-import fr.acinq.eclair.wire.Onion.{FinalLegacyPayload, FinalTlvPayload, PerHopPayload, RelayLegacyPayload}
-import fr.acinq.eclair.wire.OnionTlv.{AmountToForward, OutgoingCltv}
+import fr.acinq.eclair.router.{Hop, TrampolineHop}
+import fr.acinq.eclair.wire.Onion._
+import fr.acinq.eclair.wire.OnionTlv._
 import fr.acinq.eclair.wire._
-import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, LongToBtcAmount, MilliSatoshi, ShortChannelId, TestConstants, nodeFee, randomBytes32}
+import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, LongToBtcAmount, MilliSatoshi, ShortChannelId, TestConstants, nodeFee, randomBytes32, randomKey}
 import org.scalatest.{BeforeAndAfterAll, FunSuite}
 import scodec.bits.ByteVector
 
@@ -63,6 +63,34 @@ class HtlcGenerationSpec extends FunSuite with BeforeAndAfterAll {
     assert(payloads === expectedPayloads)
   }
 
+  test("compute trampoline onion payloads") {
+    val (firstAmountMsat, firstExpiry, payloads) = buildPayloads(trampolineHops, FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(finalAmountMsat), OutgoingCltv(finalExpiry))))
+    val expectedPayloads = Seq[PerHopPayload](
+      RelayTrampolinePayload(TlvStream[OnionTlv](AmountToForward(amount_bc), OutgoingCltv(expiry_bc), OutgoingNodeId(c))),
+      RelayTrampolinePayload(TlvStream[OnionTlv](AmountToForward(amount_cd), OutgoingCltv(expiry_cd), OutgoingNodeId(d))),
+      RelayTrampolinePayload(TlvStream[OnionTlv](AmountToForward(amount_de), OutgoingCltv(expiry_de), OutgoingNodeId(e))),
+      FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(finalAmountMsat), OutgoingCltv(finalExpiry)))
+    )
+
+    assert(firstAmountMsat === amount_ab)
+    assert(firstExpiry === expiry_ab)
+    assert(payloads === expectedPayloads)
+  }
+
+  test("compute payloads to pay a trampoline node") {
+    val trampolinePacket = OnionRoutingPacket(0, randomKey.publicKey.value, ByteVector.fill(Sphinx.TrampolinePacket.PayloadLength)(0), ByteVector32.Zeroes)
+    val (firstAmountMsat, firstExpiry, payloads) = buildPayloads(hops.drop(1), FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(finalAmountMsat), OutgoingCltv(finalExpiry), TrampolineOnion(trampolinePacket))))
+    val expectedPayloads = Seq[PerHopPayload](
+      RelayLegacyPayload(channelUpdate_bc.shortChannelId, amount_bc, expiry_bc),
+      RelayLegacyPayload(channelUpdate_cd.shortChannelId, amount_cd, expiry_cd),
+      RelayLegacyPayload(channelUpdate_de.shortChannelId, amount_de, expiry_de),
+      FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(finalAmountMsat), OutgoingCltv(finalExpiry), TrampolineOnion(trampolinePacket))))
+
+    assert(firstAmountMsat === amount_ab)
+    assert(firstExpiry === expiry_ab)
+    assert(payloads === expectedPayloads)
+  }
+
   def testBuildOnion(legacy: Boolean): Unit = {
     val finalPayload = if (legacy) {
       FinalLegacyPayload(finalAmountMsat, finalExpiry)
@@ -71,7 +99,7 @@ class HtlcGenerationSpec extends FunSuite with BeforeAndAfterAll {
     }
     val (_, _, payloads) = buildPayloads(hops.drop(1), finalPayload)
     val nodes = hops.map(_.nextNodeId)
-    val PacketAndSecrets(packet_b, _) = buildOnion(nodes, payloads, paymentHash)
+    val PacketAndSecrets(packet_b, _) = buildOnion(Sphinx.PaymentPacket)(nodes, payloads, paymentHash)
     assert(packet_b.payload.length === Sphinx.PaymentPacket.PayloadLength)
 
     // let's peel the onion
@@ -110,6 +138,56 @@ class HtlcGenerationSpec extends FunSuite with BeforeAndAfterAll {
 
   test("build onion with final tlv payload") {
     testBuildOnion(legacy = false)
+  }
+
+  test("build onion to pay trampoline node") {
+    import fr.acinq.eclair.wire.OnionTlv._
+
+    // We use c and d as trampoline hops to reach e:
+    //             .----.   .----.
+    //            /      \ /      \
+    // a -> b -> c        d        e
+
+    val (amount_c, expiry_c, trampolinePayloads) = buildPayloads(trampolineHops.drop(1), FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(finalAmountMsat), OutgoingCltv(finalExpiry))))
+    assert(amount_c === amount_bc)
+    assert(expiry_c === expiry_bc)
+    assert(trampolinePayloads.length === 3)
+
+    val Sphinx.PacketAndSecrets(trampolineOnion, _) = buildOnion(Sphinx.TrampolinePacket)(Seq(c, d, e), trampolinePayloads, paymentHash)
+    assert(trampolineOnion.payload.length === Sphinx.TrampolinePacket.PayloadLength)
+    val (_, _, payloads) = buildPayloads(hops.take(2), FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(amount_c), OutgoingCltv(expiry_c), TrampolineOnion(trampolineOnion))))
+    val PacketAndSecrets(packet_a, _) = buildOnion(Sphinx.PaymentPacket)(Seq(a, b, c), payloads, paymentHash)
+    assert(packet_a.payload.length === Sphinx.PaymentPacket.PayloadLength)
+
+    val Right(decryptedPacket_a) = Sphinx.PaymentPacket.peel(priv_a.privateKey, paymentHash, packet_a)
+    assert(!decryptedPacket_a.isLastPacket)
+    val payload_a = OnionCodecs.relayPerHopPayloadCodec.decode(decryptedPacket_a.payload.bits).require.value
+    assert(payload_a === RelayLegacyPayload(channelUpdate_ab.shortChannelId, amount_ab, expiry_ab))
+
+    val Right(decryptedPacket_b) = Sphinx.PaymentPacket.peel(priv_b.privateKey, paymentHash, decryptedPacket_a.nextPacket)
+    assert(!decryptedPacket_b.isLastPacket)
+    val payload_b = OnionCodecs.relayPerHopPayloadCodec.decode(decryptedPacket_b.payload.bits).require.value
+    assert(payload_b === RelayLegacyPayload(channelUpdate_bc.shortChannelId, amount_c, expiry_c))
+
+    val Right(decryptedPacket_c) = Sphinx.PaymentPacket.peel(priv_c.privateKey, paymentHash, decryptedPacket_b.nextPacket)
+    assert(decryptedPacket_c.isLastPacket)
+
+    val payload_c = OnionCodecs.tlvPerHopPayloadCodec.decode(decryptedPacket_c.payload.bits).require.value
+    val Some(TrampolineOnion(trampoline_packet_c)) = payload_c.records.collectFirst { case t: TrampolineOnion => t }
+    val Right(decryptedTrampolinePacket_c) = Sphinx.TrampolinePacket.peel(priv_c.privateKey, paymentHash, trampoline_packet_c)
+    assert(!decryptedTrampolinePacket_c.isLastPacket)
+    val trampoline_payload_c = OnionCodecs.tlvPerHopPayloadCodec.decode(decryptedTrampolinePacket_c.payload.bits).require.value
+    assert(RelayTrampolinePayload(trampoline_payload_c) === trampolinePayloads.head)
+
+    val Right(decryptedTrampolinePacket_d) = Sphinx.TrampolinePacket.peel(priv_d.privateKey, paymentHash, decryptedTrampolinePacket_c.nextPacket)
+    assert(!decryptedTrampolinePacket_d.isLastPacket)
+    val trampoline_payload_d = OnionCodecs.tlvPerHopPayloadCodec.decode(decryptedTrampolinePacket_d.payload.bits).require.value
+    assert(RelayTrampolinePayload(trampoline_payload_d) === trampolinePayloads(1))
+
+    val Right(decryptedTrampolinePacket_e) = Sphinx.TrampolinePacket.peel(priv_e.privateKey, paymentHash, decryptedTrampolinePacket_d.nextPacket)
+    assert(decryptedTrampolinePacket_e.isLastPacket)
+    val trampoline_payload_e = OnionCodecs.tlvPerHopPayloadCodec.decode(decryptedTrampolinePacket_e.payload.bits).require.value
+    assert(FinalTlvPayload(trampoline_payload_e) === trampolinePayloads(2))
   }
 
   test("build a command including the onion") {
@@ -187,4 +265,14 @@ object HtlcGenerationSpec {
 
   val expiry_ab = expiry_bc + channelUpdate_bc.cltvExpiryDelta
   val amount_ab = amount_bc + fee_b
+
+  // simple trampoline route b -> c -> d -> e
+  // a will embed the trampoline onion created in a normal onion sent to b
+  // TODO: @t-bast: update this with NodeUpdate values for fees and cltv
+
+  val trampolineHops = Seq[TrampolineHop](
+    TrampolineHop(b, c, channelUpdate_bc.cltvExpiryDelta, fee_b),
+    TrampolineHop(c, d, channelUpdate_cd.cltvExpiryDelta, fee_c),
+    TrampolineHop(d, e, channelUpdate_de.cltvExpiryDelta, fee_d)
+  )
 }

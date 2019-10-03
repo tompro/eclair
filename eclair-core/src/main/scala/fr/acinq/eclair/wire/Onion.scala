@@ -17,6 +17,7 @@
 package fr.acinq.eclair.wire
 
 import fr.acinq.bitcoin.ByteVector32
+import fr.acinq.bitcoin.Crypto.PublicKey
 import fr.acinq.eclair.crypto.Sphinx
 import fr.acinq.eclair.wire.CommonCodecs._
 import fr.acinq.eclair.wire.TlvCodecs._
@@ -49,6 +50,12 @@ object OnionTlv {
   /** Payment secret specified in the Bolt 11 invoice. */
   case class PaymentSecret(secret: ByteVector32) extends OnionTlv
 
+  /** Id of the next node. */
+  case class OutgoingNodeId(nodeId: PublicKey) extends OnionTlv
+
+  /** An encrypted trampoline onion packet. */
+  case class TrampolineOnion(packet: OnionRoutingPacket) extends OnionTlv
+
 }
 
 object Onion {
@@ -64,6 +71,8 @@ object Onion {
   sealed trait TlvFormat extends PerHopPayloadFormat {
     def records: TlvStream[OnionTlv]
   }
+
+  // TODO: @t-bast: clear up this hierarchy for trampoline
 
   /** Per-hop payload from an HTLC's payment onion (after decryption and decoding). */
   sealed trait PerHopPayload
@@ -99,12 +108,20 @@ object Onion {
     override val outgoingChannelId = records.get[OutgoingChannelId].get.shortChannelId
   }
 
+  case class RelayTrampolinePayload(records: TlvStream[OnionTlv]) extends PerHopPayload with TlvFormat {
+    val amountToForward = records.get[AmountToForward].get.amount
+    val outgoingCltv = records.get[OutgoingCltv].get.cltv
+    val outgoingNodeId = records.get[OutgoingNodeId].get.nodeId
+  }
+
   case class FinalTlvPayload(records: TlvStream[OnionTlv]) extends FinalPayload with TlvFormat {
     override val amount = records.get[AmountToForward].get.amount
     override val expiry = records.get[OutgoingCltv].get.cltv
     override val paymentSecret = records.get[PaymentSecret].map(_.secret)
     override val totalAmount = records.get[TotalAmount].map(_.amount).getOrElse(amount)
   }
+
+  // TODO: @t-bast: need more utility functions here to create standard payloads
 
   def createMultiPartPayload(amount: MilliSatoshi, totalAmount: MilliSatoshi, expiry: CltvExpiry, paymentSecret: ByteVector32): FinalPayload =
     FinalTlvPayload(TlvStream(AmountToForward(amount), TotalAmount(totalAmount), OutgoingCltv(expiry), PaymentSecret(paymentSecret)))
@@ -126,6 +143,8 @@ object OnionCodecs {
 
   val paymentOnionPacketCodec: Codec[OnionRoutingPacket] = onionRoutingPacketCodec(Sphinx.PaymentPacket.PayloadLength)
 
+  val trampolineOnionPacketCodec: Codec[OnionRoutingPacket] = onionRoutingPacketCodec(Sphinx.TrampolinePacket.PayloadLength)
+
   /**
    * The 1.1 BOLT spec changed the onion frame format to use variable-length per-hop payloads.
    * The first bytes contain a varint encoding the length of the payload data (not including the trailing mac).
@@ -145,12 +164,19 @@ object OnionCodecs {
 
   private val paymentSecret: Codec[PaymentSecret] = (("length" | constant(hex"20")) :: ("payment_secret" | bytes32)).as[PaymentSecret]
 
+  private val outgoingNodeId: Codec[OutgoingNodeId] = (("length" | constant(hex"21")) :: ("node_id" | publicKey)).as[OutgoingNodeId]
+
+  private val trampolineOnion: Codec[TrampolineOnion] = (("length" | constant(hex"fd01d2")) :: trampolineOnionPacketCodec).as[TrampolineOnion]
+
   private val onionTlvCodec = discriminated[OnionTlv].by(varint)
     .typecase(UInt64(1), totalAmount)
     .typecase(UInt64(2), amountToForward)
     .typecase(UInt64(4), outgoingCltv)
     .typecase(UInt64(6), outgoingChannelId)
     .typecase(UInt64(8), paymentSecret)
+    // Types below aren't specified - use cautiously when deploying (be careful with backwards-compatibility).
+    .typecase(UInt64(250), outgoingNodeId)
+    .typecase(UInt64(252), trampolineOnion)
 
   val tlvPerHopPayloadCodec: Codec[TlvStream[OnionTlv]] = TlvCodecs.lengthPrefixedTlvStream[OnionTlv](onionTlvCodec).complete
 

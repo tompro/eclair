@@ -25,7 +25,7 @@ import fr.acinq.bitcoin.{ByteVector32, Crypto}
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.crypto.Sphinx
 import fr.acinq.eclair.db.{OutgoingPayment, OutgoingPaymentStatus}
-import fr.acinq.eclair.payment.PaymentLifecycle.{buildCommand, buildOnion}
+import fr.acinq.eclair.payment.PaymentLifecycle.{buildCommand, buildOnion, buildPayloads}
 import fr.acinq.eclair.payment.Relayer.FinalPayload
 import fr.acinq.eclair.router.Announcements
 import fr.acinq.eclair.wire.Onion.{FinalLegacyPayload, FinalTlvPayload, PerHopPayload, RelayTlvPayload}
@@ -47,16 +47,17 @@ class RelayerSpec extends TestkitBaseClass {
   import HtlcGenerationSpec._
   import RelayerSpec._
 
-  case class FixtureParam(nodeParams: NodeParams, relayer: ActorRef, register: TestProbe, paymentHandler: TestProbe, sender: TestProbe)
+  case class FixtureParam(nodeParams: NodeParams, relayer: ActorRef, router: TestProbe, register: TestProbe, paymentHandler: TestProbe, sender: TestProbe)
 
   override def withFixture(test: OneArgTest): Outcome = {
     within(30 seconds) {
       val nodeParams = TestConstants.Bob.nodeParams
+      val router = TestProbe()
       val register = TestProbe()
       val paymentHandler = TestProbe()
       // we are node B in the route A -> B -> C -> ....
-      val relayer = system.actorOf(Relayer.props(nodeParams, register.ref, paymentHandler.ref))
-      withFixture(test.toNoArgTest(FixtureParam(nodeParams, relayer, register, paymentHandler, TestProbe())))
+      val relayer = system.actorOf(Relayer.props(nodeParams, router.ref, register.ref, paymentHandler.ref))
+      withFixture(test.toNoArgTest(FixtureParam(nodeParams, relayer, router, register, paymentHandler, TestProbe())))
     }
   }
 
@@ -96,7 +97,7 @@ class RelayerSpec extends TestkitBaseClass {
         val payload = RelayTlvPayload(TlvStream[OnionTlv](AmountToForward(amountMsat), OutgoingCltv(expiry), OutgoingChannelId(hop.lastUpdate.shortChannelId)))
         (amountMsat + nextFee, expiry + hop.lastUpdate.cltvExpiryDelta, payload +: currentPayloads)
     }
-    val Sphinx.PacketAndSecrets(onion, _) = buildOnion(hops.map(_.nextNodeId), payloads, paymentHash)
+    val Sphinx.PacketAndSecrets(onion, _) = buildOnion(Sphinx.PaymentPacket)(hops.map(_.nextNodeId), payloads, paymentHash)
     val add_ab = UpdateAddHtlc(channelId_ab, 123456, firstAmountMsat, paymentHash, firstExpiry, onion)
     relayer ! LocalChannelUpdate(null, channelId_bc, channelUpdate_bc.shortChannelId, c, None, channelUpdate_bc, makeCommitments(channelId_bc))
 
@@ -288,6 +289,26 @@ class RelayerSpec extends TestkitBaseClass {
     paymentHandler.expectNoMsg(50 millis)
   }
 
+  test("fail to relay an htlc-add when the trampoline onion is malformed") { f =>
+    import f._
+    import fr.acinq.eclair.wire.OnionTlv._
+
+    val trampolineOnion = buildOnion(Sphinx.TrampolinePacket)(Seq(b), Seq(FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(finalAmountMsat), OutgoingCltv(finalExpiry)))), paymentHash).packet
+    // We manually make the trampoline onion invalid (hmac)
+    val (cmd, _) = buildCommand(UUID.randomUUID(), paymentHash, hops.take(1), FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(finalAmountMsat), OutgoingCltv(finalExpiry), TrampolineOnion(trampolineOnion.copy(hmac = ByteVector32.Zeroes)))))
+    val add_ab = UpdateAddHtlc(channelId = channelId_ab, id = 123456, cmd.amount, cmd.paymentHash, cmd.cltvExpiry, cmd.onion)
+    sender.send(relayer, ForwardAdd(add_ab))
+
+    val fail = register.expectMsgType[Register.Forward[CMD_FAIL_MALFORMED_HTLC]].message
+    assert(fail.id === add_ab.id)
+    assert(fail.onionHash == Sphinx.TrampolinePacket.hash(trampolineOnion.copy(hmac = ByteVector32.Zeroes)))
+    assert(fail.failureCode === (FailureMessageCodecs.BADONION | FailureMessageCodecs.PERM | 5))
+
+    router.expectNoMsg(100 millis)
+    register.expectNoMsg(100 millis)
+    paymentHandler.expectNoMsg(100 millis)
+  }
+
   test("fail to relay an htlc-add when the onion payload is missing data") { f =>
     import f._
     import fr.acinq.eclair.wire.OnionTlv._
@@ -316,7 +337,7 @@ class RelayerSpec extends TestkitBaseClass {
     import f._
     import fr.acinq.eclair.wire.OnionTlv._
 
-    val relayer = system.actorOf(Relayer.props(TestConstants.Bob.nodeParams.copy(globalFeatures = ByteVector.empty), register.ref, paymentHandler.ref))
+    val relayer = system.actorOf(Relayer.props(TestConstants.Bob.nodeParams.copy(globalFeatures = ByteVector.empty), router.ref, register.ref, paymentHandler.ref))
     relayer ! LocalChannelUpdate(null, channelId_bc, channelUpdate_bc.shortChannelId, c, None, channelUpdate_bc, makeCommitments(channelId_bc))
 
     val payload_bc = TlvStream[OnionTlv](OutgoingChannelId(channelUpdate_bc.shortChannelId), AmountToForward(amount_bc), OutgoingCltv(expiry_bc))
@@ -329,6 +350,23 @@ class RelayerSpec extends TestkitBaseClass {
     register.expectMsg(Register.Forward(channelId_ab, CMD_FAIL_HTLC(add_ab.id, Right(InvalidRealm), commit = true)))
     register.expectNoMsg(50 millis)
     paymentHandler.expectNoMsg(50 millis)
+  }
+
+  test("fail to relay a trampoline htlc-add when trampoline routing is disabled") { f =>
+    import f._
+    import fr.acinq.eclair.wire.OnionTlv._
+    val relayer = system.actorOf(Relayer.props(TestConstants.Bob.nodeParams.copy(enableTrampolineRouting = false), router.ref, register.ref, paymentHandler.ref))
+
+    val (firstAmountMsat, firstExpiry, trampolinePayloads) = buildPayloads(trampolineHops.take(1), FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(finalAmountMsat), OutgoingCltv(finalExpiry))))
+    val trampolineOnion = buildOnion(Sphinx.TrampolinePacket)(Seq(b, c), trampolinePayloads, paymentHash).packet
+    val (cmd, _) = buildCommand(UUID.randomUUID(), paymentHash, hops.take(1), FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(firstAmountMsat), OutgoingCltv(firstExpiry), TrampolineOnion(trampolineOnion))))
+    val add_ab = UpdateAddHtlc(channelId_ab, 123456, cmd.amount, paymentHash, cmd.cltvExpiry, cmd.onion)
+    sender.send(relayer, ForwardAdd(add_ab))
+
+    register.expectMsg(Register.Forward(channelId_ab, CMD_FAIL_HTLC(add_ab.id, Right(PermanentNodeFailure), commit = true)))
+    router.expectNoMsg(100 millis)
+    register.expectNoMsg(100 millis)
+    paymentHandler.expectNoMsg(100 millis)
   }
 
   test("fail to relay an htlc-add when amount is below the next hop's requirements") { f =>

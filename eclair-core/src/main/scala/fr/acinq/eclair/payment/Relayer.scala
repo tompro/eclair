@@ -25,7 +25,10 @@ import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.crypto.Sphinx
 import fr.acinq.eclair.db.{OutgoingPayment, OutgoingPaymentStatus}
-import fr.acinq.eclair.router.Announcements
+import fr.acinq.eclair.payment.PaymentInitiator.SendPaymentConfig
+import fr.acinq.eclair.router.{Announcements, Router}
+import fr.acinq.eclair.wire.Onion.FinalLegacyPayload
+import fr.acinq.eclair.wire.OnionTlv.TrampolineOnion
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{CltvExpiryDelta, Features, LongToBtcAmount, MilliSatoshi, NodeParams, ShortChannelId, UInt64, nodeFee}
 import grizzled.slf4j.Logging
@@ -55,7 +58,7 @@ case class UsableBalances(balances: Seq[UsableBalance])
 /**
  * Created by PM on 01/02/2017.
  */
-class Relayer(nodeParams: NodeParams, register: ActorRef, paymentHandler: ActorRef) extends Actor with ActorLogging {
+class Relayer(nodeParams: NodeParams, router: ActorRef, register: ActorRef, paymentHandler: ActorRef) extends Actor with ActorLogging {
 
   import Relayer._
 
@@ -67,6 +70,7 @@ class Relayer(nodeParams: NodeParams, register: ActorRef, paymentHandler: ActorR
   context.system.eventStream.subscribe(self, classOf[AvailableBalanceChanged])
 
   private val commandBuffer = context.actorOf(Props(new CommandBuffer(nodeParams, register)))
+  private var payments = Map.empty[UUID, UpdateAddHtlc]
 
   override def receive: Receive = main(Map.empty, new mutable.HashMap[PublicKey, mutable.Set[ShortChannelId]] with mutable.MultiMap[PublicKey, ShortChannelId])
 
@@ -119,6 +123,39 @@ class Relayer(nodeParams: NodeParams, register: ActorRef, paymentHandler: ActorR
               log.info(s"forwarding htlc #${add.id} paymentHash=${add.paymentHash} from channelId=${add.channelId} to shortChannelId=$selectedShortChannelId")
               register ! Register.ForwardShortId(selectedShortChannelId, cmdAdd)
           }
+        case Right(t: TrampolinePayload) =>
+          val valid = validateTrampoline(t)
+          if (!nodeParams.enableTrampolineRouting) {
+            log.info(s"rejecting htlc #${add.id} paymentHash=${add.paymentHash} from channelId=${add.channelId}: trampoline routing disabled")
+            commandBuffer ! CommandBuffer.CommandSend(add.channelId, add.id, CMD_FAIL_HTLC(add.id, Right(PermanentNodeFailure), commit = true))
+          } else if (valid.isDefined) {
+            log.info(s"rejecting htlc #${add.id} paymentHash=${add.paymentHash} from channelId=${add.channelId}: invalid trampoline payload")
+            commandBuffer ! CommandBuffer.CommandSend(add.channelId, add.id, valid.get)
+          } else {
+            log.info(s"forwarding htlc #${add.id} paymentHash=${add.paymentHash} from channelId=${add.channelId} using trampoline routing")
+            // TODO: @t-bast: to estimate the fee and cltv, we need to scan the latest channel updates for all our outgoing channels and choose the highest
+            // Need to clarify that with tests to observe behavior
+            val routeMaxExpiry = add.cltvExpiry - nodeParams.expiryDeltaBlocks.toCltvExpiry(nodeParams.currentBlockHeight)
+            val routeMaxFee = add.amountMsat - t.nextPayload.amountToForward - nodeFee(nodeParams.feeBase, nodeParams.feeProportionalMillionth, t.nextPayload.amountToForward)
+            val routeParams = Router.getDefaultRouteParams(nodeParams.routerConf).copy(maxFeeBase = routeMaxFee, maxFeePct = routeMaxFee.toLong.toDouble / t.nextPayload.amountToForward.toLong, routeMaxCltv = routeMaxExpiry)
+
+            val id = UUID.randomUUID()
+            val payCfg = SendPaymentConfig(id, id, None, t.add.paymentHash, t.nextPayload.outgoingNodeId, None, storeInDb = false, publishEvent = false)
+            val payFSM = context.actorOf(PaymentLifecycle.props(nodeParams, payCfg, router, register))
+            val payment = PaymentLifecycle.SendPayment(t.add.paymentHash, t.nextPayload.outgoingNodeId, FinalLegacyPayload(t.nextPayload.amountToForward, t.nextPayload.outgoingCltv), nodeParams.maxPaymentAttempts, routeParams = Some(routeParams))
+            payFSM ! payment
+            payments = payments + (id -> t.add)
+
+            // Tests to cover:
+            //  - relay a trampoline htlc-add with a channel to the next trampoline node
+            //  - relay a trampoline htlc-add finds a route to the next trampoline node
+            //  - relay a trampoline htlc-add to a legacy recipient
+            //  - relay a trampoline htlc-add with retries
+            //  - fail to relay a trampoline htlc-add when relay fee isn't sufficient
+            //  - fail to relay a trampoline htlc-add when relay expiry isn't sufficient
+            //  - forward trampoline htlc-fulfill
+            //  - forward trampoline htlc-fail
+          }
         case Left(badOnion: BadOnion) =>
           log.warning(s"couldn't parse onion: reason=${badOnion.message}")
           val cmdFail = CMD_FAIL_MALFORMED_HTLC(add.id, badOnion.onionHash, badOnion.code, commit = true)
@@ -129,6 +166,24 @@ class Relayer(nodeParams: NodeParams, register: ActorRef, paymentHandler: ActorR
           val cmdFail = CMD_FAIL_HTLC(add.id, Right(failure), commit = true)
           commandBuffer ! CommandBuffer.CommandSend(add.channelId, add.id, cmdFail)
       }
+
+    case p@PaymentSent(id, _, paymentPreimage, _) => payments.get(id).foreach(add => {
+      // TODO: @t-bast: we should instead plug this to the Relayer's ForwardFulfill flow with a Relayed payment
+      // This should allow us to log the correct value for toChannelId
+      // TODO: it also seems the entry is still there in pending relays -> make sure it's deleted properly
+      val cmd = CMD_FULFILL_HTLC(add.id, paymentPreimage, commit = true)
+      commandBuffer ! CommandBuffer.CommandSend(add.channelId, add.id, cmd)
+      context.system.eventStream.publish(PaymentRelayed(add.amountMsat, p.amount + p.feesPaid, add.paymentHash, fromChannelId = add.channelId, toChannelId = add.channelId))
+      payments = payments - id
+    })
+
+    case PaymentFailed(id, _, _, _) => payments.get(id).foreach(add => {
+      log.info(s"rejecting htlc #${add.id} paymentHash=${add.paymentHash} from channelId=${add.channelId} reason=failed to relay via trampoline")
+      // TODO: @t-bast: need to translate the payment failures into the right FailureMessage (not always TemporaryNodeFailure)
+      // Need tests to see how this behaves when integrated
+      commandBuffer ! CommandBuffer.CommandSend(add.channelId, add.id, CMD_FAIL_HTLC(add.id, Right(TemporaryNodeFailure), commit = true))
+      payments = payments - id
+    })
 
     case Status.Failure(Register.ForwardShortIdFailure(Register.ForwardShortId(shortChannelId, CMD_ADD_HTLC(_, _, _, _, Right(add), _, _)))) =>
       log.warning(s"couldn't resolve downstream channel $shortChannelId, failing htlc #${add.id}")
@@ -230,7 +285,7 @@ class Relayer(nodeParams: NodeParams, register: ActorRef, paymentHandler: ActorR
 }
 
 object Relayer extends Logging {
-  def props(nodeParams: NodeParams, register: ActorRef, paymentHandler: ActorRef) = Props(classOf[Relayer], nodeParams, register, paymentHandler)
+  def props(nodeParams: NodeParams, router: ActorRef, register: ActorRef, paymentHandler: ActorRef) = Props(classOf[Relayer], nodeParams, router, register, paymentHandler)
 
   case class OutgoingChannel(nextNodeId: PublicKey, channelUpdate: ChannelUpdate, commitments: Commitments)
 
@@ -241,6 +296,8 @@ object Relayer extends Logging {
     val relayFeeMsat: MilliSatoshi = add.amountMsat - payload.amountToForward
     val expiryDelta: CltvExpiryDelta = add.cltvExpiry - payload.outgoingCltv
   }
+  // TODO: @t-bast: will probably trigger that relay with multiple incoming UpdateAddHtlc (AMP)
+  case class TrampolinePayload(add: UpdateAddHtlc, payload: Onion.FinalPayload, nextPayload: Onion.RelayTrampolinePayload, nextTrampolinePacket: OnionRoutingPacket) extends NextPayload
   // @formatter:on
 
   /**
@@ -262,6 +319,15 @@ object Relayer extends Logging {
               logger.warn(s"${remainder.length} bits remaining after per-hop payload decoding: there might be an issue with the onion codec")
             }
             perHopPayload match {
+              case finalPayload: Onion.FinalTlvPayload if finalPayload.records.get[TrampolineOnion].isDefined =>
+                Sphinx.TrampolinePacket.peel(privateKey, add.paymentHash, finalPayload.records.get[TrampolineOnion].get.packet) match {
+                  // TODO: @t-bast: not the right codec if we're the final trampoline node (and messy decrypt)
+                  case Right(p@Sphinx.DecryptedPacket(payload, nextPacket, _)) => OnionCodecs.tlvPerHopPayloadCodec.decode(payload.bits) match {
+                    case Attempt.Successful(DecodeResult(tlvRecords, _)) => Right(TrampolinePayload(add, finalPayload, Onion.RelayTrampolinePayload(tlvRecords), nextPacket))
+                    case Attempt.Failure(_) => Left(InvalidOnionPayload(UInt64(0), 0))
+                  }
+                  case Left(badOnion) => Left(badOnion)
+                }
               case finalPayload: Onion.FinalPayload => Right(FinalPayload(add, finalPayload))
               case relayPayload: Onion.RelayPayload => Right(RelayPayload(add, relayPayload, nextPacket))
             }
@@ -272,6 +338,16 @@ object Relayer extends Logging {
         }
       case Left(badOnion) => Left(badOnion)
     }
+
+  def validateTrampoline(p: TrampolinePayload): Option[CMD_FAIL_HTLC] = {
+    if (p.add.amountMsat < p.payload.amount || p.payload.amount <= p.nextPayload.amountToForward) {
+      Some(CMD_FAIL_HTLC(p.add.id, Right(FinalIncorrectHtlcAmount(p.add.amountMsat)), commit = true))
+    } else if (p.add.cltvExpiry != p.payload.expiry || p.payload.expiry <= p.nextPayload.outgoingCltv) {
+      Some(CMD_FAIL_HTLC(p.add.id, Right(FinalIncorrectCltvExpiry(p.add.cltvExpiry)), commit = true))
+    } else {
+      None
+    }
+  }
 
   /**
    * Validate an incoming htlc when we are the last node.
