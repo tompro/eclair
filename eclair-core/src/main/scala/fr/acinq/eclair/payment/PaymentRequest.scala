@@ -327,6 +327,8 @@ object PaymentRequest {
 
     lazy val requirePaymentSecret: Boolean = hasFeature(bitmask, PAYMENT_SECRET_MANDATORY)
 
+    lazy val allowTrampoline: Boolean = hasFeature(bitmask, TRAMPOLINE_PAYMENT_MANDATORY) || hasFeature(bitmask, TRAMPOLINE_PAYMENT_OPTIONAL)
+
   }
 
   object Features {
@@ -335,9 +337,12 @@ object PaymentRequest {
     val BASIC_MULTI_PART_PAYMENT_OPTIONAL = 1
     val PAYMENT_SECRET_MANDATORY = 2
     val PAYMENT_SECRET_OPTIONAL = 3
+    // TODO: @t-bast: these are temporary feature bits: update once spec-ed
+    val TRAMPOLINE_PAYMENT_MANDATORY = 42
+    val TRAMPOLINE_PAYMENT_OPTIONAL = 43
 
-    def apply(features: Int*): Features = Features(long2bits(features.foldLeft(0) {
-      case (current, feature) => current + (1 << feature)
+    def apply(features: Int*): Features = Features(long2bits(features.foldLeft(0L) {
+      case (current, feature) => current + (1L << feature)
     }))
   }
 

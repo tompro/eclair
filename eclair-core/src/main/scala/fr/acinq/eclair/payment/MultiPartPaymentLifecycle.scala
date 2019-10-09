@@ -30,7 +30,7 @@ import fr.acinq.eclair.payment.PaymentRequest.ExtraHop
 import fr.acinq.eclair.payment.PaymentSent.PartialPayment
 import fr.acinq.eclair.payment.Relayer.{GetOutgoingChannels, OutgoingChannel, OutgoingChannels}
 import fr.acinq.eclair.router._
-import fr.acinq.eclair.wire.{Onion, OnionRoutingPacket, PaymentTimeout, UpdateAddHtlc}
+import fr.acinq.eclair.wire.{Onion, OnionRoutingPacket, OnionTlv, PaymentTimeout, UpdateAddHtlc}
 import fr.acinq.eclair.{CltvExpiry, FSMDiagnosticActorLogging, Logs, LongToBtcAmount, MilliSatoshi, NodeParams, ToMilliSatoshiConversion}
 import scodec.bits.ByteVector
 
@@ -206,7 +206,8 @@ object MultiPartPaymentLifecycle {
                                   finalExpiry: CltvExpiry,
                                   maxAttempts: Int,
                                   assistedRoutes: Seq[Seq[ExtraHop]] = Nil,
-                                  routeParams: Option[RouteParams] = None) {
+                                  routeParams: Option[RouteParams] = None,
+                                  additionalTlvs: Seq[OnionTlv] = Nil) {
     require(totalAmount > 0.msat, s"total amount must be > 0")
   }
 
@@ -284,11 +285,11 @@ object MultiPartPaymentLifecycle {
     SendPayment(
       request.paymentHash,
       request.targetNodeId,
-      Onion.createMultiPartPayload(childAmount, request.totalAmount, request.finalExpiry, request.paymentSecret),
+      Onion.createMultiPartPayload(childAmount, request.totalAmount, request.finalExpiry, request.paymentSecret, request.additionalTlvs),
       request.maxAttempts,
       request.assistedRoutes,
       request.routeParams,
-      Hop(nodeParams.nodeId, channel.nextNodeId, channel.channelUpdate) :: Nil)
+      ChannelHop(nodeParams.nodeId, channel.nextNodeId, channel.channelUpdate) :: Nil)
   }
 
   /** Compute the maximum amount we should send in a single child payment. */
