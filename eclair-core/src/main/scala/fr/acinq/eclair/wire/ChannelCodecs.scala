@@ -24,7 +24,7 @@ import fr.acinq.bitcoin.{ByteVector32, ByteVector64, Crypto, OutPoint, Transacti
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.crypto.ShaChain
 import fr.acinq.eclair.payment.Origin
-import fr.acinq.eclair.payment.Origin.{Relayed, Local}
+import fr.acinq.eclair.payment.Origin.{Local, Relayed}
 import fr.acinq.eclair.transactions.Transactions._
 import fr.acinq.eclair.transactions._
 import fr.acinq.eclair.wire.CommonCodecs._

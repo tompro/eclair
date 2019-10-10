@@ -231,7 +231,7 @@ class RelayerSpec extends TestkitBaseClass {
     assert(fwd1.shortChannelId === channelUpdate_bc.shortChannelId)
     assert(fwd1.message.upstream === Upstream.Relayed(add_ab))
 
-    sender.send(relayer, Status.Failure(Register.ForwardShortIdFailure(fwd1)))
+    register.send(register.lastSender, Status.Failure(Register.ForwardShortIdFailure(fwd1)))
 
     val fwd2 = register.expectMsgType[Register.Forward[CMD_FAIL_HTLC]]
     assert(fwd2.channelId === channelId_ab)
