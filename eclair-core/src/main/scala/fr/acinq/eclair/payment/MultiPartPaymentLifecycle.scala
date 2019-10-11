@@ -26,7 +26,7 @@ import fr.acinq.eclair.payment.PaymentLifecycle.SendPayment
 import fr.acinq.eclair.payment.PaymentSent.PartialPayment
 import fr.acinq.eclair.router._
 import fr.acinq.eclair.transactions.Transactions
-import fr.acinq.eclair.wire.{Onion, PaymentTimeout}
+import fr.acinq.eclair.wire.PaymentTimeout
 import fr.acinq.eclair.{FSMDiagnosticActorLogging, Logs, LongToBtcAmount, MilliSatoshi, NodeParams, ToMilliSatoshiConversion}
 
 import scala.annotation.tailrec
@@ -250,10 +250,20 @@ object MultiPartPaymentLifecycle {
   // @formatter:on
 
   private def createChildPayment(nodeParams: NodeParams, request: SendPaymentRequest, childAmount: MilliSatoshi, channel: UsableBalance): SendPayment = {
-    SendPayment(
+    val trampolinePayload = PaymentLifecycle.buildTrampolinePayload(
       request.paymentHash,
       request.targetNodeId,
-      Onion.createMultiPartPayload(childAmount, request.amount, request.finalExpiry(nodeParams.currentBlockHeight), request.paymentRequest.get.paymentSecret.get),
+      request.trampolineId,
+      childAmount,
+      request.amount,
+      request.finalExpiry(nodeParams.currentBlockHeight),
+      request.paymentRequest.get.paymentSecret.get,
+      request.trampolineFees,
+      request.trampolineDelta)
+    SendPayment(
+      request.paymentHash,
+      request.trampolineId,
+      trampolinePayload,
       request.maxAttempts,
       request.assistedRoutes,
       request.routeParams,
@@ -283,7 +293,7 @@ object MultiPartPaymentLifecycle {
       case _ if remaining < 0.msat => throw new RuntimeException(s"payment splitting error: remaining amount must not be negative ($remaining): sending $toSend to ${request.targetNodeId} with balances=$balances, channels=$channels network=${networkStats.capacity}, fees=($maxFeeBase, $maxFeePct)")
       case channel :: rest =>
         val childPayments = splitInsideChannel(remaining, channel)
-        split(remaining - childPayments.map(_.finalPayload.amount).sum, payments ++ childPayments, rest, splitInsideChannel)
+        split(remaining - childPayments.map(_.finalPayload.amount - request.trampolineFees).sum, payments ++ childPayments, rest, splitInsideChannel)
     }
 
     // If we have direct channels to the target, we use them.
@@ -298,7 +308,7 @@ object MultiPartPaymentLifecycle {
     } else {
       balances.filter(p => p.remoteNodeId != request.targetNodeId).sortBy(_.canSend)
     }
-    val remotePayments = split(toSend - directPayments.map(_.finalPayload.amount).sum, Seq.empty, channels, (remaining: MilliSatoshi, channel: UsableBalance) => {
+    val remotePayments = split(toSend - directPayments.map(_.finalPayload.amount - request.trampolineFees).sum, Seq.empty, channels, (remaining: MilliSatoshi, channel: UsableBalance) => {
       // We use network statistics with a random factor to decide on the maximum amount for child payments.
       // The current choice of parameters is completely arbitrary and could be made configurable.
       // We could also learn from previous payment failures to dynamically tweak that value.

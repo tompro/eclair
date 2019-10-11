@@ -142,7 +142,15 @@ class Relayer(nodeParams: NodeParams, router: ActorRef, register: ActorRef, paym
             val id = UUID.randomUUID()
             val payCfg = SendPaymentConfig(id, id, None, t.add.paymentHash, t.nextPayload.outgoingNodeId, None, storeInDb = false, publishEvent = false)
             val payFSM = context.actorOf(PaymentLifecycle.props(nodeParams, payCfg, router, register))
-            val payment = PaymentLifecycle.SendPayment(t.add.paymentHash, t.nextPayload.outgoingNodeId, FinalLegacyPayload(t.nextPayload.amountToForward, t.nextPayload.outgoingCltv), nodeParams.maxPaymentAttempts, routeParams = Some(routeParams))
+            val finalPayload = t.nextPayload.records.get[OnionTlv.PaymentSecret] match {
+              case Some(OnionTlv.PaymentSecret(secret)) => Onion.createMultiPartPayload(
+                t.nextPayload.amountToForward,
+                t.nextPayload.records.get[OnionTlv.TotalAmount].map(_.amount).getOrElse(t.nextPayload.amountToForward),
+                t.nextPayload.outgoingCltv,
+                secret)
+              case None => FinalLegacyPayload(t.nextPayload.amountToForward, t.nextPayload.outgoingCltv)
+            }
+            val payment = PaymentLifecycle.SendPayment(t.add.paymentHash, t.nextPayload.outgoingNodeId, finalPayload, nodeParams.maxPaymentAttempts, routeParams = Some(routeParams))
             payFSM ! payment
             payments = payments + (id -> t.add)
 
