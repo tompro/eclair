@@ -26,7 +26,7 @@ import fr.acinq.eclair.payment.PaymentLifecycle.SendPayment
 import fr.acinq.eclair.payment.PaymentSent.PartialPayment
 import fr.acinq.eclair.router._
 import fr.acinq.eclair.transactions.Transactions
-import fr.acinq.eclair.wire.PaymentTimeout
+import fr.acinq.eclair.wire.{Onion, PaymentTimeout}
 import fr.acinq.eclair.{FSMDiagnosticActorLogging, Logs, LongToBtcAmount, MilliSatoshi, NodeParams, ToMilliSatoshiConversion}
 
 import scala.annotation.tailrec
@@ -250,24 +250,36 @@ object MultiPartPaymentLifecycle {
   // @formatter:on
 
   private def createChildPayment(nodeParams: NodeParams, request: SendPaymentRequest, childAmount: MilliSatoshi, channel: UsableBalance): SendPayment = {
-    val trampolinePayload = PaymentLifecycle.buildTrampolinePayload(
-      request.paymentHash,
-      request.targetNodeId,
-      request.trampolineId,
-      childAmount,
-      request.amount,
-      request.finalExpiry(nodeParams.currentBlockHeight),
-      request.paymentRequest.get.paymentSecret.get,
-      request.trampolineFees,
-      request.trampolineDelta)
-    SendPayment(
-      request.paymentHash,
-      request.trampolineId,
-      trampolinePayload,
-      request.maxAttempts,
-      request.assistedRoutes,
-      request.routeParams,
-      Hop(nodeParams.nodeId, channel.remoteNodeId, channel.lastUpdate) :: Nil)
+    request.trampolineId match {
+      case Some(trampolineId) =>
+        val trampolinePayload = PaymentLifecycle.buildTrampolinePayload(
+          request.paymentHash,
+          request.targetNodeId,
+          trampolineId,
+          childAmount,
+          request.amount,
+          request.finalExpiry(nodeParams.currentBlockHeight),
+          request.paymentRequest.get.paymentSecret.get,
+          request.trampolineFees,
+          request.trampolineDelta)
+        SendPayment(
+          request.paymentHash,
+          trampolineId,
+          trampolinePayload,
+          request.maxAttempts,
+          request.assistedRoutes,
+          request.routeParams,
+          Hop(nodeParams.nodeId, channel.remoteNodeId, channel.lastUpdate) :: Nil)
+      case None =>
+        SendPayment(
+          request.paymentHash,
+          request.targetNodeId,
+          Onion.createMultiPartPayload(childAmount, request.amount, request.finalExpiry(nodeParams.currentBlockHeight), request.paymentRequest.get.paymentSecret.get),
+          request.maxAttempts,
+          request.assistedRoutes,
+          request.routeParams,
+          Hop(nodeParams.nodeId, channel.remoteNodeId, channel.lastUpdate) :: Nil)
+    }
   }
 
   /**

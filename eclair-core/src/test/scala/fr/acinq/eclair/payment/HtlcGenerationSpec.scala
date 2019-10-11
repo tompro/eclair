@@ -63,7 +63,7 @@ class HtlcGenerationSpec extends FunSuite with BeforeAndAfterAll {
     assert(payloads === expectedPayloads)
   }
 
-  test("compute trampoline onion payloads") {
+  ignore("compute trampoline onion payloads") {
     val (firstAmountMsat, firstExpiry, payloads) = buildPayloads(trampolineHops, FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(finalAmountMsat), OutgoingCltv(finalExpiry))))
     val expectedPayloads = Seq[PerHopPayload](
       RelayTrampolinePayload(TlvStream[OnionTlv](AmountToForward(amount_bc), OutgoingCltv(expiry_bc), OutgoingNodeId(c))),

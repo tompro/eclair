@@ -30,7 +30,6 @@ import fr.acinq.eclair.wire.Onion.{FinalLegacyPayload, FinalTlvPayload}
 import fr.acinq.eclair.wire.OnionTlv._
 import fr.acinq.eclair.wire.{Onion, OnionTlv, TlvStream}
 import fr.acinq.eclair.{CltvExpiryDelta, LongToBtcAmount, MilliSatoshi, NodeParams}
-import scodec.bits.HexStringSyntax
 
 /**
  * Created by PM on 29/08/2016.
@@ -52,9 +51,14 @@ class PaymentInitiator(nodeParams: NodeParams, router: ActorRef, relayer: ActorR
         case _ =>
           val payFsm = spawnPaymentFsm(paymentId, r)
           r.predefinedRoute match {
-            case Nil =>
-              val trampolinePayload = PaymentLifecycle.buildTrampolinePayload(r.paymentHash, r.targetNodeId, r.trampolineId, r.amount, finalExpiry, r.trampolineFees, r.trampolineDelta)
-              payFsm forward SendPayment(r.paymentHash, r.trampolineId, trampolinePayload, r.maxAttempts, r.assistedRoutes, r.routeParams)
+            case Nil => r.trampolineId match {
+              case Some(trampolineId) =>
+                val trampolinePayload = PaymentLifecycle.buildTrampolinePayload(r.paymentHash, r.targetNodeId, trampolineId, r.amount, finalExpiry, r.trampolineFees, r.trampolineDelta)
+                payFsm forward SendPayment(r.paymentHash, trampolineId, trampolinePayload, r.maxAttempts, r.assistedRoutes, r.routeParams)
+              case None =>
+                // NB: we only generate legacy payment onions for now for maximum compatibility.
+                payFsm forward SendPayment(r.paymentHash, r.targetNodeId, FinalLegacyPayload(r.amount, finalExpiry), r.maxAttempts, r.assistedRoutes, r.routeParams)
+            }
             // TODO: @t-bast: remove this test hook once done
             case b :: d :: Nil =>
               // We use b as trampoline hop to reach d:
@@ -100,7 +104,8 @@ object PaymentInitiator {
                                 assistedRoutes: Seq[Seq[ExtraHop]] = Nil,
                                 routeParams: Option[RouteParams] = None,
                                 // TODO: the caller should provide these values and increase them before retrying if he receives a payment error
-                                trampolineId: PublicKey = PublicKey(hex"03933884aaf1d6b108397e5efe5c86bcf2d8ca8d2f700eda99db9214fc2712b134"), // this is endurance (testnet)
+                                // trampolineId: Option[PublicKey] = Some(PublicKey(hex"03933884aaf1d6b108397e5efe5c86bcf2d8ca8d2f700eda99db9214fc2712b134")), // this is endurance (testnet)
+                                trampolineId: Option[PublicKey] = None,
                                 trampolineFees: MilliSatoshi = 0 msat,
                                 trampolineDelta: CltvExpiryDelta = Channel.MIN_CLTV_EXPIRY_DELTA) {
     // We add one block in order to not have our htlcs fail when a new block has just been found.
