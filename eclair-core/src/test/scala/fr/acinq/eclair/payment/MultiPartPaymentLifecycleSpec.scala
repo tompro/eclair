@@ -91,13 +91,31 @@ class MultiPartPaymentLifecycleSpec extends TestKit(ActorSystem("test")) with fi
     val payment = SendPaymentRequest(1500 * 1000 msat, paymentHash, b, 1, paymentRequest = Some(createMultiPartInvoice(1500 * 1000 msat)))
     sender.send(payFsm, payment)
     router.expectMsg(GetNetworkStats)
-    router.send(payFsm, GetNetworkStatsResponse(None))
-    // we should retry if network stats aren't available yet, and ask the router to compute them.
-    router.expectMsg(TickComputeNetworkStats)
-    router.expectMsg(GetNetworkStats)
     router.send(payFsm, GetNetworkStatsResponse(Some(emptyStats)))
     relayer.expectMsg(GetUsableBalances)
     awaitCond(payFsm.stateName === PAYMENT_IN_PROGRESS)
+    assert(payFsm.stateData.asInstanceOf[PaymentProgress].networkStats === Some(emptyStats))
+  }
+
+  test("get network statistics not available") { f =>
+    import f._
+
+    assert(payFsm.stateName === PAYMENT_INIT)
+    val payment = SendPaymentRequest(2500 * 1000 msat, paymentHash, b, 1, paymentRequest = Some(createMultiPartInvoice(1500 * 1000 msat)))
+    sender.send(payFsm, payment)
+    router.expectMsg(GetNetworkStats)
+    router.send(payFsm, GetNetworkStatsResponse(None))
+    // If network stats aren't available we'll use local channel balance information instead.
+    // We should ask the router to compute statistics (for next payment attempts).
+    router.expectMsg(TickComputeNetworkStats)
+    relayer.expectMsg(GetUsableBalances)
+    awaitCond(payFsm.stateName === PAYMENT_IN_PROGRESS)
+    assert(payFsm.stateData.asInstanceOf[PaymentProgress].networkStats === None)
+
+    relayer.send(payFsm, usableBalances)
+    waitUntilAmountSent(f, payment.amount)
+    val payments = payFsm.stateData.asInstanceOf[PaymentProgress].pending.values
+    assert(payments.size > 1)
   }
 
   test("send to peer node via multiple channels") { f =>
@@ -351,7 +369,7 @@ class MultiPartPaymentLifecycleSpec extends TestKit(ActorSystem("test")) with fi
       val routeParams = RouteParams(randomize = true, Random.nextInt(1000).msat, Random.nextInt(10).toDouble / 100, 20, CltvExpiryDelta(144), None)
       val request = SendPaymentRequest(toSend, paymentHash, e, 1, routeParams = Some(routeParams), paymentRequest = Some(createMultiPartInvoice(toSend)))
       val fuzzParams = s"(sending $toSend with network capacity ${networkStats.capacity.percentile75.toMilliSatoshi}, fee base ${routeParams.maxFeeBase} and fee percentage ${routeParams.maxFeePct})"
-      val (remaining, payments) = splitPayment(f.nodeParams, toSend, usableBalances.balances, networkStats, request, randomize = true)
+      val (remaining, payments) = splitPayment(f.nodeParams, toSend, usableBalances.balances, Some(networkStats), request, randomize = true)
       assert(remaining === 0.msat, fuzzParams)
       assert(payments.nonEmpty, fuzzParams)
       assert(payments.map(_.finalPayload.amount).sum === toSend, fuzzParams)

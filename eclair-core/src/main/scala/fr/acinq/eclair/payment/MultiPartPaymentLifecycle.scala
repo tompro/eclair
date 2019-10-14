@@ -58,18 +58,16 @@ class MultiPartPaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, 
 
     case Event(s: GetNetworkStatsResponse, d: PaymentInit) =>
       require(d.request.nonEmpty && d.sender.nonEmpty, "multi-part payment request must be set")
+      log.debug("network stats: {}", s.stats.map(_.capacity))
       val r = d.request.get
-      s.stats match {
-        case Some(networkStats) =>
-          log.debug("network stats available: {}", networkStats.capacity)
-          relayer ! GetUsableBalances
-          goto(PAYMENT_IN_PROGRESS) using PaymentProgress(d.sender.get, r, networkStats, r.amount, r.maxAttempts, Map.empty, Nil)
-        case None =>
-          log.debug("network stats not available: retrying...")
-          router ! TickComputeNetworkStats
-          router ! GetNetworkStats
-          stay
+      // If we don't have network stats it's ok, we'll use data about our local channels instead.
+      // We tell the router to compute those stats though: in case our payment attempt fails, they will be available for
+      // another payment attempt.
+      if (s.stats.isEmpty) {
+        router ! TickComputeNetworkStats
       }
+      relayer ! GetUsableBalances
+      goto(PAYMENT_IN_PROGRESS) using PaymentProgress(d.sender.get, r, s.stats, r.amount, r.maxAttempts, Map.empty, Nil)
   }
 
   when(PAYMENT_IN_PROGRESS) {
@@ -224,7 +222,7 @@ object MultiPartPaymentLifecycle {
    * @param pending           pending child payments (payment sent, we are waiting for a fulfill or a failure).
    * @param failures          previous child payment failures.
    */
-  case class PaymentProgress(sender: ActorRef, request: SendPaymentRequest, networkStats: NetworkStats, toSend: MilliSatoshi, remainingAttempts: Int, pending: Map[UUID, SendPayment], failures: Seq[PaymentFailure]) extends Data
+  case class PaymentProgress(sender: ActorRef, request: SendPaymentRequest, networkStats: Option[NetworkStats], toSend: MilliSatoshi, remainingAttempts: Int, pending: Map[UUID, SendPayment], failures: Seq[PaymentFailure]) extends Data
   /**
    * When we exhaust our retry attempts without success, we abort the payment.
    * Once we're in that state, we wait for all the pending child payments to settle.
@@ -283,6 +281,21 @@ object MultiPartPaymentLifecycle {
     }
   }
 
+  /** Compute the maximum amount we should send in a single child payment. */
+  private def computeThreshold(networkStats: Option[NetworkStats], balances: Seq[UsableBalance]): MilliSatoshi = {
+    import com.google.common.math.Quantiles.median
+    import scala.collection.JavaConverters.asJavaCollectionConverter
+    // We use network statistics with a random factor to decide on the maximum amount for child payments.
+    // The current choice of parameters is completely arbitrary and could be made configurable.
+    // We could also learn from previous payment failures to dynamically tweak that value.
+    val maxAmount = networkStats.map(_.capacity.percentile75.toMilliSatoshi * ((75.0 + Random.nextInt(25)) / 100))
+    // If network statistics aren't available, we'll use our local channels to choose a value.
+    maxAmount.getOrElse({
+      val localBalanceMedian = median().compute(balances.map(b => java.lang.Long.valueOf(b.canSend.toLong)).asJavaCollection)
+      MilliSatoshi(localBalanceMedian.toLong)
+    })
+  }
+
   /**
    * Split a payment into many child payments.
    *
@@ -292,7 +305,7 @@ object MultiPartPaymentLifecycle {
    * @param randomize randomize the channel selection.
    * @return the child payments that should be then sent to PaymentLifecycle actors.
    */
-  def splitPayment(nodeParams: NodeParams, toSend: MilliSatoshi, balances: Seq[UsableBalance], networkStats: NetworkStats, request: SendPaymentRequest, randomize: Boolean): (MilliSatoshi, Seq[SendPayment]) = {
+  def splitPayment(nodeParams: NodeParams, toSend: MilliSatoshi, balances: Seq[UsableBalance], networkStats: Option[NetworkStats], request: SendPaymentRequest, randomize: Boolean): (MilliSatoshi, Seq[SendPayment]) = {
     require(toSend > 0.msat, "amount to send must be greater than 0")
     require(request.paymentRequest.isDefined && request.paymentRequest.get.features.allowMultiPart, "payment request must allow multi-part payment")
 
@@ -303,7 +316,8 @@ object MultiPartPaymentLifecycle {
     def split(remaining: MilliSatoshi, payments: Seq[SendPayment], channels: Seq[UsableBalance], splitInsideChannel: (MilliSatoshi, UsableBalance) => Seq[SendPayment]): Seq[SendPayment] = channels match {
       case Nil => payments
       case _ if remaining == 0.msat => payments
-      case _ if remaining < 0.msat => throw new RuntimeException(s"payment splitting error: remaining amount must not be negative ($remaining): sending $toSend to ${request.targetNodeId} with balances=$balances, channels=$channels network=${networkStats.capacity}, fees=($maxFeeBase, $maxFeePct)")
+      case _ if remaining < 0.msat => throw new RuntimeException(s"payment splitting error: remaining amount must not be negative ($remaining): sending $toSend to ${request.targetNodeId} with balances=$balances, channels=$channels network=${networkStats.map(_.capacity)}, fees=($maxFeeBase, $maxFeePct)")
+      case channel :: rest if channel.canSend == 0.msat => split(remaining, payments, rest, splitInsideChannel)
       case channel :: rest =>
         val childPayments = splitInsideChannel(remaining, channel)
         split(remaining - childPayments.map(_.finalPayload.amount - request.trampolineFees).sum, payments ++ childPayments, rest, splitInsideChannel)
@@ -325,7 +339,7 @@ object MultiPartPaymentLifecycle {
       // We use network statistics with a random factor to decide on the maximum amount for child payments.
       // The current choice of parameters is completely arbitrary and could be made configurable.
       // We could also learn from previous payment failures to dynamically tweak that value.
-      val maxAmount = networkStats.capacity.percentile75.toMilliSatoshi * ((75.0 + Random.nextInt(25)) / 100)
+      val maxAmount = computeThreshold(networkStats, balances)
       if (remaining <= maxAmount) {
         val childAmount = Seq(remaining, channel.canSend * (1 - maxFeePct), channel.canSend - maxFeeBase).min
         if (childAmount > 0.msat) createChildPayment(nodeParams, request, childAmount, channel) :: Nil else Nil

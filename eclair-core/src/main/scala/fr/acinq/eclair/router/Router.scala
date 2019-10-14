@@ -451,9 +451,14 @@ class Router(val nodeParams: NodeParams, watcher: ActorRef, initialized: Option[
         stay using d.copy(rebroadcast = Rebroadcast(channels = Map.empty, updates = Map.empty, nodes = Map.empty))
       }
 
-    case Event(TickComputeNetworkStats, d) if d.channels.nonEmpty =>
-      log.info("re-computing network statistics")
-      stay using d.copy(stats = NetworkStats.computeStats(d.channels.values.toSeq))
+    case Event(TickComputeNetworkStats, d) =>
+      if (d.channels.nonEmpty) {
+        log.info("re-computing network statistics")
+        stay using d.copy(stats = NetworkStats.computeStats(d.channels.values.toSeq))
+      } else {
+        log.debug("cannot compute network statistics: no public channels available")
+        stay
+      }
 
     case Event(TickPruneStaleChannels, d) =>
       // first we select channels that we will prune
