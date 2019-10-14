@@ -259,6 +259,7 @@ object MultiPartPaymentLifecycle {
           childAmount,
           request.amount,
           request.finalExpiry(nodeParams.currentBlockHeight),
+          request.paymentRequest.get.routingInfo,
           request.paymentRequest.get.paymentSecret.get,
           request.trampolineFees,
           request.trampolineDelta)

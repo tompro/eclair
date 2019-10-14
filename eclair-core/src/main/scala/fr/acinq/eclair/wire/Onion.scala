@@ -19,6 +19,7 @@ package fr.acinq.eclair.wire
 import fr.acinq.bitcoin.ByteVector32
 import fr.acinq.bitcoin.Crypto.PublicKey
 import fr.acinq.eclair.crypto.Sphinx
+import fr.acinq.eclair.payment.PaymentRequest
 import fr.acinq.eclair.wire.CommonCodecs._
 import fr.acinq.eclair.wire.TlvCodecs._
 import fr.acinq.eclair.{CltvExpiry, MilliSatoshi, ShortChannelId, UInt64}
@@ -52,6 +53,12 @@ object OnionTlv {
 
   /** Id of the next node. */
   case class OutgoingNodeId(nodeId: PublicKey) extends OnionTlv
+
+  /**
+   * Invoice routing hints. Only included for intermediate trampoline nodes when they should convert to a legacy payment
+   * because the final recipient doesn't support trampoline.
+   */
+  case class InvoiceHints(extraHops: List[List[PaymentRequest.ExtraHop]]) extends OnionTlv
 
   /** An encrypted trampoline onion packet. */
   case class TrampolineOnion(packet: OnionRoutingPacket) extends OnionTlv
@@ -166,6 +173,8 @@ object OnionCodecs {
 
   private val outgoingNodeId: Codec[OutgoingNodeId] = (("length" | constant(hex"21")) :: ("node_id" | publicKey)).as[OutgoingNodeId]
 
+  private val invoiceHints: Codec[InvoiceHints] = variableSizeBytesLong(varintoverflow, list(listOfN(uint8, PaymentRequest.Codecs.extraHopCodec))).as[InvoiceHints]
+
   private val trampolineOnion: Codec[TrampolineOnion] = (("length" | constant(hex"fd01d2")) :: trampolineOnionPacketCodec).as[TrampolineOnion]
 
   private val onionTlvCodec = discriminated[OnionTlv].by(varint)
@@ -175,6 +184,7 @@ object OnionCodecs {
     .typecase(UInt64(6), outgoingChannelId)
     .typecase(UInt64(8), paymentSecret)
     // Types below aren't specified - use cautiously when deploying (be careful with backwards-compatibility).
+    .typecase(UInt64(248), invoiceHints)
     .typecase(UInt64(250), outgoingNodeId)
     .typecase(UInt64(252), trampolineOnion)
 

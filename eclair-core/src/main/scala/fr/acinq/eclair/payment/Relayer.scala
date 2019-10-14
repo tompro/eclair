@@ -28,7 +28,7 @@ import fr.acinq.eclair.db.{OutgoingPayment, OutgoingPaymentStatus}
 import fr.acinq.eclair.payment.PaymentInitiator.SendPaymentConfig
 import fr.acinq.eclair.router.{Announcements, Router}
 import fr.acinq.eclair.wire.Onion.FinalLegacyPayload
-import fr.acinq.eclair.wire.OnionTlv.TrampolineOnion
+import fr.acinq.eclair.wire.OnionTlv.{InvoiceHints, TrampolineOnion}
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{CltvExpiryDelta, Features, LongToBtcAmount, MilliSatoshi, NodeParams, ShortChannelId, UInt64, nodeFee}
 import grizzled.slf4j.Logging
@@ -138,6 +138,7 @@ class Relayer(nodeParams: NodeParams, router: ActorRef, register: ActorRef, paym
             val routeMaxExpiry = add.cltvExpiry - nodeParams.expiryDeltaBlocks.toCltvExpiry(nodeParams.currentBlockHeight)
             val routeMaxFee = add.amountMsat - t.nextPayload.amountToForward - nodeFee(nodeParams.feeBase, nodeParams.feeProportionalMillionth, t.nextPayload.amountToForward)
             val routeParams = Router.getDefaultRouteParams(nodeParams.routerConf).copy(maxFeeBase = routeMaxFee, maxFeePct = routeMaxFee.toLong.toDouble / t.nextPayload.amountToForward.toLong, routeMaxCltv = routeMaxExpiry)
+            val routingHints = t.nextPayload.records.get[InvoiceHints].map(_.extraHops).getOrElse(Nil)
 
             val id = UUID.randomUUID()
             val payCfg = SendPaymentConfig(id, id, None, t.add.paymentHash, t.nextPayload.outgoingNodeId, None, storeInDb = false, publishEvent = false)
@@ -150,7 +151,7 @@ class Relayer(nodeParams: NodeParams, router: ActorRef, register: ActorRef, paym
                 secret)
               case None => FinalLegacyPayload(t.nextPayload.amountToForward, t.nextPayload.outgoingCltv)
             }
-            val payment = PaymentLifecycle.SendPayment(t.add.paymentHash, t.nextPayload.outgoingNodeId, finalPayload, nodeParams.maxPaymentAttempts, routeParams = Some(routeParams))
+            val payment = PaymentLifecycle.SendPayment(t.add.paymentHash, t.nextPayload.outgoingNodeId, finalPayload, nodeParams.maxPaymentAttempts, assistedRoutes = routingHints, routeParams = Some(routeParams))
             payFSM ! payment
             payments = payments + (id -> t.add)
 

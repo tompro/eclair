@@ -335,20 +335,30 @@ object PaymentLifecycle {
     CMD_ADD_HTLC(firstAmount, paymentHash, firstExpiry, onion.packet, upstream = Left(id), commit = true) -> onion.sharedSecrets
   }
 
-  def buildTrampolinePayload(paymentHash: ByteVector32, targetNodeId: PublicKey, trampolineId: PublicKey, amount: MilliSatoshi, expiry: CltvExpiry, trampolineFee: MilliSatoshi, trampolineDelta: CltvExpiryDelta): FinalPayload = {
+  def buildTrampolinePayload(paymentHash: ByteVector32, targetNodeId: PublicKey, trampolineId: PublicKey, amount: MilliSatoshi, expiry: CltvExpiry, routingInfo: Seq[Seq[ExtraHop]], trampolineFee: MilliSatoshi, trampolineDelta: CltvExpiryDelta): FinalPayload = {
     import fr.acinq.eclair.wire.OnionTlv._
+    val trampolineData = if (routingInfo.nonEmpty) {
+      FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(amount), OutgoingCltv(expiry), InvoiceHints(routingInfo.map(_.toList).toList)))
+    } else {
+      FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(amount), OutgoingCltv(expiry)))
+    }
     val (trampolineAmount, trampolineExpiry, trampolinePayloads) = buildPayloads(
       TrampolineHop(trampolineId, targetNodeId, trampolineDelta, trampolineFee) :: Nil,
-      FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(amount), OutgoingCltv(expiry))))
+      trampolineData)
     val Sphinx.PacketAndSecrets(trampolineOnion, _) = buildOnion(Sphinx.TrampolinePacket)(Seq(trampolineId, targetNodeId), trampolinePayloads, paymentHash)
     FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(trampolineAmount), OutgoingCltv(trampolineExpiry), TrampolineOnion(trampolineOnion)))
   }
 
-  def buildTrampolinePayload(paymentHash: ByteVector32, targetNodeId: PublicKey, trampolineId: PublicKey, amount: MilliSatoshi, totalAmount: MilliSatoshi, expiry: CltvExpiry, paymentSecret: ByteVector32, trampolineFee: MilliSatoshi, trampolineDelta: CltvExpiryDelta): FinalPayload = {
+  def buildTrampolinePayload(paymentHash: ByteVector32, targetNodeId: PublicKey, trampolineId: PublicKey, amount: MilliSatoshi, totalAmount: MilliSatoshi, expiry: CltvExpiry, routingInfo: Seq[Seq[ExtraHop]], paymentSecret: ByteVector32, trampolineFee: MilliSatoshi, trampolineDelta: CltvExpiryDelta): FinalPayload = {
     import fr.acinq.eclair.wire.OnionTlv._
+    val trampolineData = if (routingInfo.nonEmpty) {
+      FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(amount), TotalAmount(totalAmount), OutgoingCltv(expiry), PaymentSecret(paymentSecret), InvoiceHints(routingInfo.map(_.toList).toList)))
+    } else {
+      FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(amount), TotalAmount(totalAmount), OutgoingCltv(expiry), PaymentSecret(paymentSecret)))
+    }
     val (trampolineAmount, trampolineExpiry, trampolinePayloads) = buildPayloads(
       TrampolineHop(trampolineId, targetNodeId, trampolineDelta, trampolineFee) :: Nil,
-      FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(amount), TotalAmount(totalAmount), OutgoingCltv(expiry), PaymentSecret(paymentSecret))))
+      trampolineData)
     val Sphinx.PacketAndSecrets(trampolineOnion, _) = buildOnion(Sphinx.TrampolinePacket)(Seq(trampolineId, targetNodeId), trampolinePayloads, paymentHash)
     FinalTlvPayload(TlvStream[OnionTlv](AmountToForward(trampolineAmount), OutgoingCltv(trampolineExpiry), TrampolineOnion(trampolineOnion)))
   }

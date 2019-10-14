@@ -53,7 +53,7 @@ class PaymentInitiator(nodeParams: NodeParams, router: ActorRef, relayer: ActorR
           r.predefinedRoute match {
             case Nil => r.trampolineId match {
               case Some(trampolineId) =>
-                val trampolinePayload = PaymentLifecycle.buildTrampolinePayload(r.paymentHash, r.targetNodeId, trampolineId, r.amount, finalExpiry, r.trampolineFees, r.trampolineDelta)
+                val trampolinePayload = PaymentLifecycle.buildTrampolinePayload(r.paymentHash, r.targetNodeId, trampolineId, r.amount, finalExpiry, r.paymentRequest.map(_.routingInfo).getOrElse(Nil), r.trampolineFees, r.trampolineDelta)
                 payFsm forward SendPayment(r.paymentHash, trampolineId, trampolinePayload, r.maxAttempts, r.assistedRoutes, r.routeParams)
               case None =>
                 // NB: we only generate legacy payment onions for now for maximum compatibility.
