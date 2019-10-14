@@ -281,6 +281,10 @@ class Router(val nodeParams: NodeParams, watcher: ActorRef, initialized: Option[
       log.info("re-computing network statistics")
       stay using d.copy(stats = NetworkStats(d.channels.values.toSeq))
 
+    case Event(TickComputeNetworkStats, d) if d.channels.nonEmpty =>
+      log.info("re-computing network statistics")
+      stay using d.copy(stats = NetworkStats(d.channels.values.toSeq))
+
     case Event(TickPruneStaleChannels, d) =>
       // first we select channels that we will prune
       val staleChannels = getStaleChannels(d.channels.values, nodeParams.currentBlockHeight)
@@ -451,6 +455,7 @@ class Router(val nodeParams: NodeParams, watcher: ActorRef, initialized: Option[
 
     case Event(PeerRoutingMessage(transport, remoteNodeId, routingMessage@ReplyChannelRange(chainHash, _, _, _, shortChannelIds, _)), d) =>
       sender ! TransportHandler.ReadAck(routingMessage)
+
       Kamon.runWithContextEntry(remoteNodeIdKey, remoteNodeId.toString) {
         Kamon.runWithSpan(Kamon.spanBuilder("reply-channel-range").start(), finishSpan = true) {
 
@@ -469,7 +474,7 @@ class Router(val nodeParams: NodeParams, watcher: ActorRef, initialized: Option[
           val timestamps_opt = routingMessage.timestamps_opt.map(_.timestamps).getOrElse(List.empty[ReplyChannelRangeTlv.Timestamps])
           val checksums_opt = routingMessage.checksums_opt.map(_.checksums).getOrElse(List.empty[ReplyChannelRangeTlv.Checksums])
 
-          val shortChannelIdAndFlags = {
+          val shortChannelIdAndFlags = Kamon.runWithSpan(Kamon.spanBuilder("compute-flags").start(), finishSpan = true) {
             loop(shortChannelIds.array, timestamps_opt, checksums_opt)
           }
 

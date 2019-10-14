@@ -248,6 +248,8 @@ object JsonSupport extends Json4sJacksonSupport {
     new UInt64Serializer +
     new SatoshiSerializer +
     new MilliSatoshiSerializer +
+    new CltvExpirySerializer +
+    new CltvExpiryDeltaSerializer +
     new ShortChannelIdSerializer +
     new StateSerializer +
     new ShaChainSerializer +

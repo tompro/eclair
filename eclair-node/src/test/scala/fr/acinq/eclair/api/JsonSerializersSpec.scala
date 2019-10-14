@@ -21,6 +21,7 @@ import java.util.UUID
 
 import fr.acinq.bitcoin.{ByteVector32, OutPoint, Transaction}
 import fr.acinq.eclair._
+import fr.acinq.eclair.payment.{PaymentRequest, PaymentSettlingOnChain}
 import fr.acinq.eclair.api.JsonSupport.CustomTypeHints
 import fr.acinq.eclair.payment.{PaymentRequest, PaymentSettlingOnChain}
 import fr.acinq.eclair.transactions.{IN, OUT}
@@ -34,8 +35,6 @@ class JsonSerializersSpec extends FunSuite with Matchers {
   test("deserialize Map[OutPoint, ByteVector]") {
     val output1 = OutPoint(ByteVector32(hex"11418a2d282a40461966e4f578e1fdf633ad15c1b7fb3e771d14361127233be1"), 0)
     val output2 = OutPoint(ByteVector32(hex"3d62bd4f71dc63798418e59efbc7532380c900b5e79db3a5521374b161dd0e33"), 1)
-
-
     val map = Map(
       output1 -> hex"dead",
       output2 -> hex"beef"
