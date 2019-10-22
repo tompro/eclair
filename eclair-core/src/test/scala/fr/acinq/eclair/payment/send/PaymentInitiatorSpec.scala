@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package fr.acinq.eclair.payment
+package fr.acinq.eclair.payment.send
 
 import java.util.UUID
 
@@ -23,9 +23,10 @@ import akka.testkit.{TestActorRef, TestKit, TestProbe}
 import fr.acinq.bitcoin.Block
 import fr.acinq.eclair.channel.Channel
 import fr.acinq.eclair.payment.HtlcGenerationSpec._
-import fr.acinq.eclair.payment.PaymentInitiator.SendPaymentRequest
-import fr.acinq.eclair.payment.PaymentLifecycle.{SendPayment, SendPaymentToRoute}
-import fr.acinq.eclair.payment.PaymentRequest.{ExtraHop, Features}
+import fr.acinq.eclair.payment.receive.PaymentRequest
+import fr.acinq.eclair.payment.receive.PaymentRequest.{ExtraHop, Features}
+import fr.acinq.eclair.payment.send.PaymentInitiator.SendPaymentRequest
+import fr.acinq.eclair.payment.send.PaymentLifecycle.{SendPayment, SendPaymentToRoute}
 import fr.acinq.eclair.router.RouteParams
 import fr.acinq.eclair.wire.Onion.FinalLegacyPayload
 import fr.acinq.eclair.{CltvExpiryDelta, LongToBtcAmount, NodeParams, TestConstants, randomKey}

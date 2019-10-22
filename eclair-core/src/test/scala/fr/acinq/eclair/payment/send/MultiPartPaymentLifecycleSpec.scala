@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package fr.acinq.eclair.payment
+package fr.acinq.eclair.payment.send
 
 import java.util.UUID
 
@@ -26,10 +26,14 @@ import fr.acinq.eclair.TestConstants.{TestFeeEstimator, defaultBlockHeight}
 import fr.acinq.eclair._
 import fr.acinq.eclair.blockchain.fee.FeeratesPerKw
 import fr.acinq.eclair.crypto.Sphinx
-import fr.acinq.eclair.payment.MultiPartPaymentLifecycle._
-import fr.acinq.eclair.payment.PaymentInitiator.{SendPaymentConfig, SendPaymentRequest}
-import fr.acinq.eclair.payment.PaymentLifecycle.SendPayment
 import fr.acinq.eclair.payment.PaymentSent.PartialPayment
+import fr.acinq.eclair.payment._
+import fr.acinq.eclair.payment.receive.PaymentRequest
+import fr.acinq.eclair.payment.receive.PaymentRequest.Features
+import fr.acinq.eclair.payment.relay.{GetUsableBalances, UsableBalance, UsableBalances}
+import fr.acinq.eclair.payment.send.MultiPartPaymentLifecycle.{PAYMENT_ABORTED, PAYMENT_INIT, PAYMENT_IN_PROGRESS, PAYMENT_SUCCEEDED, PaymentAborted, PaymentProgress, _}
+import fr.acinq.eclair.payment.send.PaymentInitiator.{SendPaymentConfig, SendPaymentRequest}
+import fr.acinq.eclair.payment.send.PaymentLifecycle.SendPayment
 import fr.acinq.eclair.router._
 import fr.acinq.eclair.wire.Onion.createMultiPartPayload
 import fr.acinq.eclair.wire.{ChannelUpdate, PaymentTimeout}
@@ -404,7 +408,6 @@ object MultiPartPaymentLifecycleSpec {
   val emptyStats = NetworkStats(0, 0, Stats(Seq(0), d => Satoshi(d.toLong)), Stats(Seq(0), d => CltvExpiryDelta(d.toInt)), Stats(Seq(0), d => MilliSatoshi(d.toLong)), Stats(Seq(0), d => d.toLong))
 
   def createMultiPartInvoice(amount: MilliSatoshi): PaymentRequest = {
-    import fr.acinq.eclair.payment.PaymentRequest.Features
     PaymentRequest(Block.LivenetGenesisBlock.hash, Some(amount), paymentHash, randomKey, "Some multi-part invoice", features = Some(Features(Features.BASIC_MULTI_PART_PAYMENT_OPTIONAL)))
   }
 

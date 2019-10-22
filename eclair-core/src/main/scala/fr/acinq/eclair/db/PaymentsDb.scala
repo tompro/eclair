@@ -21,6 +21,7 @@ import java.util.UUID
 import fr.acinq.bitcoin.ByteVector32
 import fr.acinq.bitcoin.Crypto.PublicKey
 import fr.acinq.eclair.payment._
+import fr.acinq.eclair.payment.receive.PaymentRequest
 import fr.acinq.eclair.router.Hop
 import fr.acinq.eclair.{MilliSatoshi, ShortChannelId}
 

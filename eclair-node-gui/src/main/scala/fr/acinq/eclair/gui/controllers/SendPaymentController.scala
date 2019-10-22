@@ -18,7 +18,7 @@ package fr.acinq.eclair.gui.controllers
 
 import fr.acinq.eclair.CoinUtils
 import fr.acinq.eclair.gui.{FxApp, Handlers}
-import fr.acinq.eclair.payment.PaymentRequest
+import fr.acinq.eclair.payment.receive.PaymentRequest
 import grizzled.slf4j.Logging
 import javafx.beans.value.{ChangeListener, ObservableValue}
 import javafx.event.{ActionEvent, EventHandler}

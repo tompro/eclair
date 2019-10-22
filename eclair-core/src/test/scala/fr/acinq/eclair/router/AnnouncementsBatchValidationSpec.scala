@@ -28,8 +28,7 @@ import fr.acinq.eclair.blockchain.bitcoind.rpc.{BasicBitcoinJsonRPCClient, Exten
 import fr.acinq.eclair.transactions.Scripts
 import fr.acinq.eclair.wire.{ChannelAnnouncement, ChannelUpdate}
 import fr.acinq.eclair.{CltvExpiryDelta, LongToBtcAmount, ShortChannelId, randomKey}
-import org.json4s
-import org.json4s.JsonAST.{JString, JValue}
+import org.json4s.JsonAST.JString
 import org.scalatest.FunSuite
 import scodec.bits.ByteVector
 

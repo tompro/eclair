@@ -25,7 +25,8 @@ import fr.acinq.bitcoin.Crypto.PublicKey
 import fr.acinq.eclair.{MilliSatoshi, ShortChannelId}
 import fr.acinq.eclair.api.FormParamExtractors.{sha256HashUnmarshaller, shortChannelIdUnmarshaller}
 import fr.acinq.eclair.api.JsonSupport._
-import fr.acinq.eclair.payment.PaymentRequest
+import fr.acinq.eclair.payment.receive.PaymentRequest
+
 import scala.concurrent.Future
 import scala.util.{Failure, Success}
 

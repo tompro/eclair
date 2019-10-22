@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package fr.acinq.eclair.payment
+package fr.acinq.eclair.payment.receive
 
 import akka.actor.ActorSystem
 import akka.actor.Status.Failure
@@ -23,11 +23,13 @@ import fr.acinq.bitcoin.{ByteVector32, Crypto}
 import fr.acinq.eclair.TestConstants.Alice
 import fr.acinq.eclair.channel.{CMD_FAIL_HTLC, CMD_FULFILL_HTLC}
 import fr.acinq.eclair.db.IncomingPaymentStatus
-import fr.acinq.eclair.payment.LocalPaymentHandler.{GetPendingPayments, PendingPayments}
-import fr.acinq.eclair.payment.PaymentLifecycle.ReceivePayment
 import fr.acinq.eclair.payment.PaymentReceived.PartialPayment
-import fr.acinq.eclair.payment.PaymentRequest.ExtraHop
-import fr.acinq.eclair.payment.Relayer.FinalPayload
+import fr.acinq.eclair.payment.receive.LocalPaymentHandler.{GetPendingPayments, PendingPayments}
+import fr.acinq.eclair.payment.receive.PaymentRequest.ExtraHop
+import fr.acinq.eclair.payment.relay.Relayer
+import fr.acinq.eclair.payment.relay.Relayer.FinalPayload
+import fr.acinq.eclair.payment.send.PaymentLifecycle.ReceivePayment
+import fr.acinq.eclair.payment.{PaymentEvent, PaymentReceived}
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, LongToBtcAmount, NodeParams, ShortChannelId, TestConstants, randomKey}
 import org.scalatest.{Outcome, fixture}

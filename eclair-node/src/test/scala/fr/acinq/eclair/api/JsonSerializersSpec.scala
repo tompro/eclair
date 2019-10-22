@@ -21,7 +21,8 @@ import java.util.UUID
 
 import fr.acinq.bitcoin.{ByteVector32, OutPoint, Transaction}
 import fr.acinq.eclair._
-import fr.acinq.eclair.payment.{PaymentRequest, PaymentSettlingOnChain}
+import fr.acinq.eclair.payment.PaymentSettlingOnChain
+import fr.acinq.eclair.payment.receive.PaymentRequest
 import fr.acinq.eclair.transactions.{IN, OUT}
 import fr.acinq.eclair.wire.{NodeAddress, Tor2, Tor3}
 import org.scalatest.{FunSuite, Matchers}

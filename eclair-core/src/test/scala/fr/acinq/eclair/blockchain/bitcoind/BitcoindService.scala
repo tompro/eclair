@@ -17,7 +17,7 @@
 package fr.acinq.eclair.blockchain.bitcoind
 
 import java.io.File
-import java.nio.file.{Files, StandardCopyOption}
+import java.nio.file.Files
 import java.util.UUID
 
 import akka.actor.{Actor, ActorRef, ActorSystem, Props}
@@ -28,7 +28,7 @@ import fr.acinq.eclair.TestUtils
 import fr.acinq.eclair.blockchain.bitcoind.rpc.{BasicBitcoinJsonRPCClient, BitcoinJsonRPCClient}
 import fr.acinq.eclair.integration.IntegrationSpec
 import grizzled.slf4j.Logging
-import org.json4s.JsonAST.{JArray, JDecimal, JInt, JString, JValue}
+import org.json4s.JsonAST._
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package fr.acinq.eclair.payment
+package fr.acinq.eclair.payment.receive
 
 import akka.actor.ActorSystem
 import akka.actor.FSM.{CurrentState, SubscribeTransitionCallBack, Transition}
@@ -22,6 +22,7 @@ import akka.testkit.{TestActorRef, TestKit, TestProbe}
 import fr.acinq.bitcoin.{ByteVector32, Crypto}
 import fr.acinq.eclair.channel.{CMD_FAIL_HTLC, CMD_FULFILL_HTLC}
 import fr.acinq.eclair.payment.PaymentReceived.PartialPayment
+import fr.acinq.eclair.payment.{PaymentEvent, PaymentReceived}
 import fr.acinq.eclair.wire.{IncorrectOrUnknownPaymentDetails, UpdateAddHtlc}
 import fr.acinq.eclair.{CltvExpiry, LongToBtcAmount, MilliSatoshi, NodeParams, TestConstants, randomBytes32, wire}
 import org.scalatest.FunSuiteLike

@@ -23,7 +23,7 @@ import fr.acinq.bitcoin.{Block, ByteVector32, ByteVector64}
 import fr.acinq.eclair._
 import fr.acinq.eclair.router.Announcements
 import fr.acinq.eclair.wire.LightningMessageCodecs._
-import ReplyChannelRangeTlv._
+import fr.acinq.eclair.wire.ReplyChannelRangeTlv._
 import org.scalatest.FunSuite
 import scodec.bits.{ByteVector, HexStringSyntax}
 

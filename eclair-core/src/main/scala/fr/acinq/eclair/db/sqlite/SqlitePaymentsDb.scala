@@ -24,7 +24,8 @@ import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.eclair.MilliSatoshi
 import fr.acinq.eclair.db._
 import fr.acinq.eclair.db.sqlite.SqliteUtils._
-import fr.acinq.eclair.payment.{PaymentFailed, PaymentRequest, PaymentSent}
+import fr.acinq.eclair.payment.receive.PaymentRequest
+import fr.acinq.eclair.payment.{PaymentFailed, PaymentSent}
 import fr.acinq.eclair.wire.CommonCodecs
 import grizzled.slf4j.Logging
 import scodec.Attempt

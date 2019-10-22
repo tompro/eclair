@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-package fr.acinq.eclair.payment
+package fr.acinq.eclair.payment.receive
 
 import akka.actor.{Actor, ActorLogging, ActorRef, PoisonPill, Props, Status}
 import fr.acinq.bitcoin.{ByteVector32, Crypto}
 import fr.acinq.eclair.channel.{CMD_FAIL_HTLC, Channel}
 import fr.acinq.eclair.db.{IncomingPayment, IncomingPaymentStatus}
-import fr.acinq.eclair.payment.PaymentLifecycle.ReceivePayment
-import fr.acinq.eclair.payment.Relayer.FinalPayload
+import fr.acinq.eclair.payment.relay.Relayer.FinalPayload
+import fr.acinq.eclair.payment.send.PaymentLifecycle.ReceivePayment
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{CltvExpiry, MilliSatoshi, NodeParams, randomBytes32}
 

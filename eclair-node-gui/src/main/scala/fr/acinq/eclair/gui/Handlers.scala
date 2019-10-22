@@ -23,9 +23,10 @@ import akka.util.Timeout
 import fr.acinq.eclair.{MilliSatoshi, _}
 import fr.acinq.eclair.gui.controllers._
 import fr.acinq.eclair.io.{NodeURI, Peer}
-import fr.acinq.eclair.payment.PaymentInitiator.SendPaymentRequest
-import fr.acinq.eclair.payment.PaymentLifecycle.ReceivePayment
+import fr.acinq.eclair.payment.send.PaymentInitiator.SendPaymentRequest
+import fr.acinq.eclair.payment.send.PaymentLifecycle.ReceivePayment
 import fr.acinq.eclair.payment._
+import fr.acinq.eclair.payment.receive.PaymentRequest
 import grizzled.slf4j.Logging
 
 import scala.concurrent.duration._

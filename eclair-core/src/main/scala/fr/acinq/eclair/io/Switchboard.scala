@@ -26,15 +26,13 @@ import fr.acinq.eclair.blockchain.EclairWallet
 import fr.acinq.eclair.channel.Helpers.Closing
 import fr.acinq.eclair.channel.{HasCommitments, _}
 import fr.acinq.eclair.db.PendingRelayDb
-import fr.acinq.eclair.payment.Relayer.RelayPayload
-import fr.acinq.eclair.payment.{Relayed, Relayer}
+import fr.acinq.eclair.payment.relay.Relayer.RelayPayload
+import fr.acinq.eclair.payment.relay.{CommandBuffer, Relayed, Relayer}
 import fr.acinq.eclair.router.Rebroadcast
 import fr.acinq.eclair.transactions.{IN, OUT}
 import fr.acinq.eclair.wire.{TemporaryNodeFailure, UpdateAddHtlc}
 import grizzled.slf4j.Logging
 import scodec.bits.ByteVector
-
-import scala.util.Success
 
 /**
   * Ties network connections to peers.
@@ -193,7 +191,7 @@ object Switchboard extends Logging {
 
   /**
     * We store [[CMD_FULFILL_HTLC]]/[[CMD_FAIL_HTLC]]/[[CMD_FAIL_MALFORMED_HTLC]]
-    * in a database (see [[fr.acinq.eclair.payment.CommandBuffer]]) because we
+    * in a database (see [[CommandBuffer]]) because we
     * don't want to lose preimages, or to forget to fail incoming htlcs, which
     * would lead to unwanted channel closings.
     *

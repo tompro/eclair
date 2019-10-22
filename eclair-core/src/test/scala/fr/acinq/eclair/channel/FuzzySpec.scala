@@ -27,8 +27,10 @@ import fr.acinq.eclair.TestConstants.{Alice, Bob}
 import fr.acinq.eclair._
 import fr.acinq.eclair.blockchain._
 import fr.acinq.eclair.channel.states.StateTestsHelperMethods
-import fr.acinq.eclair.payment.PaymentLifecycle.ReceivePayment
-import fr.acinq.eclair.payment._
+import fr.acinq.eclair.payment.receive.{LocalPaymentHandler, PaymentRequest}
+import fr.acinq.eclair.payment.relay.Relayer
+import fr.acinq.eclair.payment.send.PaymentLifecycle
+import fr.acinq.eclair.payment.send.PaymentLifecycle.ReceivePayment
 import fr.acinq.eclair.router.Hop
 import fr.acinq.eclair.wire.Onion.FinalLegacyPayload
 import fr.acinq.eclair.wire._

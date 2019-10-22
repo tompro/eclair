@@ -27,7 +27,7 @@ import fr.acinq.eclair.TestConstants.{Alice, Bob, TestFeeEstimator}
 import fr.acinq.eclair.blockchain._
 import fr.acinq.eclair.blockchain.fee.FeeratesPerKw
 import fr.acinq.eclair.channel._
-import fr.acinq.eclair.payment.NoopPaymentHandler
+import fr.acinq.eclair.payment.receive.NoopPaymentHandler
 import fr.acinq.eclair.wire.Init
 import fr.acinq.eclair.{LongToBtcAmount, TestUtils}
 import org.scalatest.{BeforeAndAfterAll, Matchers, Outcome, fixture}

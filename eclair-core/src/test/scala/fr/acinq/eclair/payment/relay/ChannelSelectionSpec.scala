@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-package fr.acinq.eclair.payment
+package fr.acinq.eclair.payment.relay
 
 import fr.acinq.bitcoin.Crypto.PublicKey
 import fr.acinq.bitcoin.{Block, ByteVector32}
 import fr.acinq.eclair.channel.{CMD_ADD_HTLC, CMD_FAIL_HTLC}
 import fr.acinq.eclair.payment.HtlcGenerationSpec.makeCommitments
-import fr.acinq.eclair.payment.Relayer.{OutgoingChannel, RelayFailure, RelayPayload, RelaySuccess}
+import fr.acinq.eclair.payment.relay.Relayer.{OutgoingChannel, RelayFailure, RelayPayload, RelaySuccess}
 import fr.acinq.eclair.router.Announcements
 import fr.acinq.eclair.wire.Onion.RelayLegacyPayload
 import fr.acinq.eclair.wire._

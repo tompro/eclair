@@ -14,16 +14,18 @@
  * limitations under the License.
  */
 
-package fr.acinq.eclair.payment
+package fr.acinq.eclair.payment.send
 
 import java.util.UUID
 
 import akka.actor.{ActorRef, FSM, Props}
 import akka.event.Logging.MDC
 import fr.acinq.bitcoin.ByteVector32
-import fr.acinq.eclair.payment.PaymentInitiator.{SendPaymentConfig, SendPaymentRequest}
-import fr.acinq.eclair.payment.PaymentLifecycle.SendPayment
 import fr.acinq.eclair.payment.PaymentSent.PartialPayment
+import fr.acinq.eclair.payment._
+import fr.acinq.eclair.payment.relay.{GetUsableBalances, UsableBalance, UsableBalances}
+import fr.acinq.eclair.payment.send.PaymentInitiator.{SendPaymentConfig, SendPaymentRequest}
+import fr.acinq.eclair.payment.send.PaymentLifecycle.SendPayment
 import fr.acinq.eclair.router._
 import fr.acinq.eclair.transactions.Transactions
 import fr.acinq.eclair.wire.{Onion, PaymentTimeout}
