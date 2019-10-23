@@ -65,6 +65,8 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     }
   }
 
+  // TODO: @t-bast: add tons of test with NodeRelayed origin here
+
   test("recv CMD_ADD_HTLC (empty origin)") { f =>
     import f._
     val initialState = alice.stateData.asInstanceOf[DATA_NORMAL]

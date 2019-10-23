@@ -110,6 +110,8 @@ object Upstream {
   final case class Local(id: UUID) extends Upstream
   /** Our node forwarded a single incoming HTLC to an outgoing channel. */
   final case class Relayed(add: UpdateAddHtlc) extends Upstream
+  /** Our node forwarded an incoming HTLC set to a remote outgoing node (potentially producing multiple downstream HTLCs). */
+  final case class NodeRelayed(adds: Seq[UpdateAddHtlc]) extends Upstream
 }
 
 sealed trait Command

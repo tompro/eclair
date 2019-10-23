@@ -37,7 +37,14 @@ object Origin {
   case class Local(id: UUID, sender: Option[ActorRef]) extends Origin // we don't persist reference to local actors
   /** Our node forwarded a single incoming HTLC to an outgoing channel. */
   case class Relayed(originChannelId: ByteVector32, originHtlcId: Long, amountIn: MilliSatoshi, amountOut: MilliSatoshi) extends Origin
-  // TODO: @t-bast: add NodeRelayed
+  /**
+   * Our node forwarded an incoming HTLC set to a remote outgoing node (potentially producing multiple downstream HTLCs).
+   * TODO: @t-bast: do we need to include some kind of upstream expiry and re-check it before retries? Or it will automatically fail in PaymentLifecycle anyway?
+   *
+   * @param origins origin channelIds and htlcIds.
+   * @param sender actor sending the outgoing HTLC (if we haven't restarted and lost the reference).
+   */
+  case class NodeRelayed(origins: Seq[(ByteVector32, Long)], sender: Option[ActorRef]) extends Origin
 }
 // @formatter:on
 
@@ -54,7 +61,7 @@ object Origin {
  * It also receives channel HTLC events (fulfill / failed) and relays those to the appropriate handlers.
  * It also maintains an up-to-date view of local channel balances.
  */
-class Relayer(nodeParams: NodeParams, register: ActorRef, paymentHandler: ActorRef) extends Actor with ActorLogging {
+class Relayer(nodeParams: NodeParams, router: ActorRef, register: ActorRef, paymentHandler: ActorRef) extends Actor with ActorLogging {
 
   import Relayer._
 
@@ -64,6 +71,7 @@ class Relayer(nodeParams: NodeParams, register: ActorRef, paymentHandler: ActorR
 
   private val commandBuffer = context.actorOf(Props(new CommandBuffer(nodeParams, register)))
   private val channelRelayer = context.actorOf(ChannelRelayer.props(nodeParams, self, register, commandBuffer))
+  private val nodeRelayer = context.actorOf(NodeRelayer.props(nodeParams, self, router, commandBuffer, register))
 
   override def receive: Receive = main(Map.empty, new mutable.HashMap[PublicKey, mutable.Set[ShortChannelId]] with mutable.MultiMap[PublicKey, ShortChannelId])
 
@@ -92,6 +100,8 @@ class Relayer(nodeParams: NodeParams, register: ActorRef, paymentHandler: ActorR
       }
       context become main(channelUpdates1, node2channels)
 
+    // TODO: @t-bast: at some point draw the message flow between all payment components?
+
     case ForwardAdd(add, previousFailures) =>
       log.debug(s"received forwarding request for htlc #${add.id} paymentHash=${add.paymentHash} from channelId=${add.channelId}")
       IncomingPacket.decrypt(add, nodeParams.privateKey, nodeParams.globalFeatures) match {
@@ -103,9 +113,8 @@ class Relayer(nodeParams: NodeParams, register: ActorRef, paymentHandler: ActorR
         case Right(r: IncomingPacket.NodeRelayPacket) if !nodeParams.enableTrampolineRouting =>
           log.info(s"rejecting htlc #${add.id} paymentHash=${add.paymentHash} from channelId=${add.channelId} to nodeId=${r.innerPayload.outgoingNodeId} reason=trampoline disabled")
           commandBuffer ! CommandBuffer.CommandSend(add.channelId, add.id, CMD_FAIL_HTLC(add.id, Right(RequiredNodeFeatureMissing), commit = true))
-        case Right(_: IncomingPacket.NodeRelayPacket) =>
-          // TODO: @t-bast: relay trampoline payload
-          ???
+        case Right(r: IncomingPacket.NodeRelayPacket) =>
+          nodeRelayer forward r
         case Left(badOnion: BadOnion) =>
           log.warning(s"couldn't parse onion: reason=${badOnion.message}")
           val cmdFail = CMD_FAIL_MALFORMED_HTLC(add.id, badOnion.onionHash, badOnion.code, commit = true)
@@ -120,12 +129,11 @@ class Relayer(nodeParams: NodeParams, register: ActorRef, paymentHandler: ActorR
     case Status.Failure(addFailed: AddHtlcFailed) =>
       import addFailed.paymentHash
       addFailed.origin match {
-        case Origin.Local(id, None) =>
-          handleLocalPaymentAfterRestart(PaymentFailed(id, paymentHash, Nil))
-        case Origin.Local(_, Some(sender)) =>
-          sender ! Status.Failure(addFailed)
-        case _: Origin.Relayed =>
-          channelRelayer forward Status.Failure(addFailed)
+        case Origin.Local(id, None) => handleLocalPaymentAfterRestart(PaymentFailed(id, paymentHash, Nil))
+        case Origin.Local(_, Some(sender)) => sender ! Status.Failure(addFailed)
+        case _: Origin.Relayed => channelRelayer forward Status.Failure(addFailed)
+        case Origin.NodeRelayed(_, None) => ??? // TODO: @t-bast: reconcile after restart
+        case Origin.NodeRelayed(_, Some(sender)) => sender ! Status.Failure(addFailed)
       }
 
     case ForwardFulfill(fulfill, to, add) =>
@@ -139,6 +147,8 @@ class Relayer(nodeParams: NodeParams, register: ActorRef, paymentHandler: ActorR
           val cmd = CMD_FULFILL_HTLC(originHtlcId, fulfill.paymentPreimage, commit = true)
           commandBuffer ! CommandBuffer.CommandSend(originChannelId, originHtlcId, cmd)
           context.system.eventStream.publish(PaymentRelayed(amountIn, amountOut, add.paymentHash, fromChannelId = originChannelId, toChannelId = fulfill.channelId))
+        case Origin.NodeRelayed(_, None) => ??? // TODO: @t-bast: reconcile after restart
+        case Origin.NodeRelayed(_, Some(sender)) => sender ! fulfill
       }
 
     case ForwardFail(fail, to, add) =>
@@ -150,6 +160,8 @@ class Relayer(nodeParams: NodeParams, register: ActorRef, paymentHandler: ActorR
         case Origin.Relayed(originChannelId, originHtlcId, _, _) =>
           val cmd = CMD_FAIL_HTLC(originHtlcId, Left(fail.reason), commit = true)
           commandBuffer ! CommandBuffer.CommandSend(originChannelId, originHtlcId, cmd)
+        case Origin.NodeRelayed(_, None) => ??? // TODO: @t-bast: reconcile after restart
+        case Origin.NodeRelayed(_, Some(sender)) => sender ! fail
       }
 
     case ForwardFailMalformed(fail, to, add) =>
@@ -161,6 +173,8 @@ class Relayer(nodeParams: NodeParams, register: ActorRef, paymentHandler: ActorR
         case Origin.Relayed(originChannelId, originHtlcId, _, _) =>
           val cmd = CMD_FAIL_MALFORMED_HTLC(originHtlcId, fail.onionHash, fail.failureCode, commit = true)
           commandBuffer ! CommandBuffer.CommandSend(originChannelId, originHtlcId, cmd)
+        case Origin.NodeRelayed(_, None) => ??? // TODO: @t-bast: reconcile after restart
+        case Origin.NodeRelayed(_, Some(sender)) => sender ! fail
       }
 
     case ack: CommandBuffer.CommandAck => commandBuffer forward ack
@@ -203,7 +217,7 @@ class Relayer(nodeParams: NodeParams, register: ActorRef, paymentHandler: ActorR
 
 object Relayer extends Logging {
 
-  def props(nodeParams: NodeParams, register: ActorRef, paymentHandler: ActorRef) = Props(classOf[Relayer], nodeParams, register, paymentHandler)
+  def props(nodeParams: NodeParams, router: ActorRef, register: ActorRef, paymentHandler: ActorRef) = Props(classOf[Relayer], nodeParams, router, register, paymentHandler)
 
   type ChannelUpdates = Map[ShortChannelId, OutgoingChannel]
   type NodeChannels = mutable.HashMap[PublicKey, mutable.Set[ShortChannelId]] with mutable.MultiMap[PublicKey, ShortChannelId]

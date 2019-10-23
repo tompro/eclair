@@ -188,6 +188,7 @@ class ChannelCodecsSpec extends FunSuite {
       -32L -> Relayed(randomBytes32, 54, 15000000 msat, 14000000 msat),
       -4L -> Local(UUID.randomUUID(), None))
     assert(originsMapCodec.decodeValue(originsMapCodec.encode(map).require).require === map)
+    // TODO: @t-bast: add tests
   }
 
   test("encode/decode map of spending txes") {

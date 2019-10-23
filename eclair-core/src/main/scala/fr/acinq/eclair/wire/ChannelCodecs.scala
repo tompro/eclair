@@ -198,6 +198,7 @@ object ChannelCodecs extends Logging {
     .typecase(0x03, localCodec) // backward compatible
     .typecase(0x01, provide(Local(UNKNOWN_UUID, None)))
     .typecase(0x02, relayedCodec)
+    // TODO: @t-bast: add new origin codec for node relayed
 
   val originsListCodec: Codec[List[(Long, Origin)]] = listOfN(uint16, int64 ~ originCodec)
 
